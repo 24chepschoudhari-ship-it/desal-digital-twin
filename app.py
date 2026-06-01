@@ -8,7 +8,7 @@ from datetime import datetime
 st.set_page_config(page_title="Desalination Digital Twin", layout="wide")
 
 st.title("🖥️ Industrial Desalination Digital Twin")
-st.markdown("### Ultimate Engineering Suite: Sizing, Crisis Simulation, SCADA Logs & ROI Payback Engine")
+st.markdown("### Ultimate Engineering Suite: Sizing, Multi-Scheme Aging, SCADA Logs & ROI Payback Engine")
 st.write("---")
 
 # Water Source Template Database
@@ -114,7 +114,7 @@ treated_chemistry = {'Na': st.session_state.na_val, 'Cl': cl_input, 'Ca': st.ses
 local_inlet_tds = sum(treated_chemistry.values())
 
 
-# 5. CORE ENGINE SIMULATION LOOP (Runs cross-comparison arrays for financials)
+# 5. CORE HYDRAULIC & FINANCIAL SIMULATION COMPUTE LOOP
 q_permeate_calc = modified_feed_flow * (Y_user_target / 100.0)
 required_surface_area_m2 = (q_permeate_calc * 1000.0) / design_flux_lmh
 calculated_total_elements = int(np.ceil(required_surface_area_m2 / selected_mem["area"]))
@@ -137,7 +137,8 @@ TCF = np.exp(2640.0 * (1.0 / t_kelvin_base - 1.0 / t_kelvin_actual))
 months_axis = np.arange(0, 49)
 
 technology_financial_matrix = {}
-scada_log_data_stream = []  # Holds runtime trace events specifically for logging parse
+lifecycle_curves_by_scheme = {}
+scada_log_data_stream = []
 
 for tech, cfg in full_tech_registry.items():
     pressures, secs, perm_tds = [], [], []
@@ -176,12 +177,13 @@ for tech, cfg in full_tech_registry.items():
         secs.append(net_kw / (modified_feed_flow * (Y_user_target / 100.0)))
         perm_tds.append(local_inlet_tds * (1.0 - current_rejection))
         
-        # Save trace frame if this matches the primary active tab view scheme
         if tech == 'Conventional':
             scada_log_data_stream.append({
                 'month': m, 'p': pump_p, 'tds': local_inlet_tds * (1.0 - current_rejection),
                 'lsi': tail_lsi, 'sat': caso4_sat, 'cip': is_cip_month
             })
+            
+    lifecycle_curves_by_scheme[tech] = {'p': pressures, 'sec': secs, 'tds': perm_tds}
             
     annual_water_yield_m3 = (modified_feed_flow * (Y_user_target / 100.0) * 24.0) * 365.0
     base_hardware_capex = (vessel_count * 12500.0) + (calculated_total_elements * selected_mem['cost'])
@@ -196,44 +198,92 @@ for tech, cfg in full_tech_registry.items():
     }
 
 
-# --- 6. SCADA DISTRIBUTED CONTROL PANEL LOG (From Layer 3) ---
+# --- 6. RESTORED STREAMWISE PFD VISUAL METRICS ---
+st.write("---")
+st.subheader("🏭 Plant Live Process Flow Diagram (PFD) Streamwise Metrics")
+pfd_col1, pfd_col2, pfd_col3, pfd_col4 = st.columns(4)
+
+active_p = technology_financial_matrix['Conventional']['p_last']
+active_sec = technology_financial_matrix['Conventional']['sec_last']
+active_tds = technology_financial_matrix['Conventional']['tds_last']
+
+with pfd_col1:
+    st.metric(label="Feed Inflow Stream (Q₀)", value=f"{modified_feed_flow:.1f} m³/h", delta="-40% Valve Drop" if fail_valve_jam else None, delta_color="inverse")
+with pfd_col2:
+    st.metric(label="High-Pressure Pump Feed", value=f"{active_p:.1f} bar", delta=f"+{active_p - lifecycle_curves_by_scheme['Conventional']['p'][0]:.1f} bar Wear" if fail_algae_bloom else None, delta_color="inverse")
+with pfd_col3:
+    st.metric(label="Specific Energy Draw", value=f"{active_sec:.3f} kWh/m³")
+with pfd_col4:
+    st.metric(label="Permeate Quality Stream", value=f"{active_tds:.1f} mg/L", delta="Oxidized Leakage" if fail_sbs_pump else None, delta_color="inverse")
+
+
+# --- 7. SCADA CONSOLE LOGGER ---
 st.write("---")
 st.subheader("📟 SCADA Distributed Control System (DCS) Live Operational Shift Log")
-
 log_box_content = ""
 current_timestamp = datetime.now().strftime("%H:%M:%S")
 
-for idx, frame in enumerate(scada_log_data_stream):
+for frame in scada_log_data_stream:
     m = frame['month']
     time_prefix = f"[{current_timestamp} | Month {m:02d}]"
-    
-    if m == 0:
-        log_box_content += f"🟢 {time_prefix} SYSTEM: Plant sequencing online. Configured loop footprint loaded.\n"
+    if m == 0: log_box_content += f"🟢 {time_prefix} SYSTEM: Plant sequencing online. Footprint active.\n"
     if m == 1:
-        if fail_valve_jam: log_box_content += f"🔴 {time_prefix} VALVE FAILURE: Feed line valve actuator jammed at 60% standard flow!\n"
-        if fail_sbs_pump: log_box_content += f"🔴 {time_prefix} ORP WARNING: Missing sodium bisulfite dosing. Core membrane oxidising!\n"
-        if fail_algae_bloom: log_box_content += f"⚠️ {time_prefix} INTENSIVE FOULING: Massive biological organic load shock entering intake arrays.\n"
-    if frame['lsi'] > 1.5:
-        log_box_content += f"⚠️ {time_prefix} CHEM EXCURSION: Concentrated brine LSI high at {frame['lsi']:.2f}. Scales building up.\n"
-    if frame['cip']:
-        log_box_content += f"🧼 {time_prefix} MAINTENANCE ACTION: Automated CIP wash loop execution sequence complete.\n"
-    if frame['p'] > 65.0:
-        log_box_content += f"🔴 {time_prefix} DRIVE CRITICAL: High-pressure pump head exceeding safe limit at {frame['p']:.1f} bar.\n"
+        if fail_valve_jam: log_box_content += f"🔴 {time_prefix} VALVE FAILURE: Actuator jammed at 60% standard flow!\n"
+        if fail_sbs_pump: log_box_content += f"🔴 {time_prefix} SCADA ALARM: SBS dosing pump loss. Oxidant breakthrough!\n"
+        if fail_algae_bloom: log_box_content += f"⚠️ {time_prefix} INTAKE NOTICE: High organic organic loading spike from marine bloom.\n"
+    if frame['cip']: log_box_content += f"🧼 {time_prefix} MAINTENANCE: Automated scheduled CIP flush cycle executed.\n"
+    if frame['p'] > 65.0: log_box_content += f"🔴 {time_prefix} PRESSURE OVERLOAD: Pump head pushing critical limits at {frame['p']:.1f} bar.\n"
 
-st.text_area("Terminal Console Log Summary", value=log_box_content, height=180, label_visibility="collapsed")
+st.text_area("Terminal Console Log Summary", value=log_box_content, height=150, label_visibility="collapsed")
 
 
-# --- 7. ROI & CAPITAL PAYBACK PROFILE MATRIX (From Layer 4 with Fixes) ---
+# --- 8. RESTORED FULL 6-GRAPH EXPANDED STRUCTURAL AGING MATRIX ---
+st.write("---")
+st.subheader("⏳ Multi-Scheme Long-Term 48-Month Structural Aging Curves")
+
+fig1, ax1 = plt.subplots(2, 3, figsize=(16, 8.5))
+
+# Row 1: Conventional & CCRO Schemes
+ax1[0, 0].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['p'], label='Conventional', color='#95a5a6', linewidth=2)
+ax1[0, 0].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['p'], label='CCRO', color='#3498db', linewidth=2)
+ax1[0, 0].set_title("Required Discharge Pressure (bar)")
+ax1[0, 0].grid(True, linestyle=":")
+ax1[0, 0].legend()
+
+ax1[0, 1].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['sec'], label='Conventional', color='#95a5a6', linewidth=2)
+ax1[0, 1].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['sec'], label='CCRO', color='#3498db', linewidth=2)
+ax1[0, 1].set_title("Specific Energy Cost (kWh/m³)")
+ax1[0, 1].grid(True, linestyle=":")
+
+ax1[0, 2].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['tds'], label='Conventional', color='#95a5a6', linewidth=2)
+ax1[0, 2].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['tds'], label='CCRO', color='#3498db', linewidth=2)
+ax1[0, 2].set_title("Permeate Stream Quality TDS (mg/L)")
+ax1[0, 2].grid(True, linestyle=":")
+
+# Row 2: PFRO Advanced Scheme Performance Metrics
+ax1[1, 0].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['p'], label='PFRO Optimization', color='#2ecc71', linewidth=2)
+ax1[1, 0].set_title("PFRO Hydraulic Curve (bar)")
+ax1[1, 0].set_xlabel("Operating Months")
+ax1[1, 0].grid(True, linestyle=":")
+ax1[1, 0].legend()
+
+ax1[1, 1].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['sec'], label='PFRO Optimization', color='#2ecc71', linewidth=2)
+ax1[1, 1].set_title("PFRO Energy Vector (kWh/m³)")
+ax1[1, 1].set_xlabel("Operating Months")
+ax1[1, 1].grid(True, linestyle=":")
+
+ax1[1, 2].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['tds'], label='PFRO Optimization', color='#2ecc71', linewidth=2)
+ax1[1, 2].set_title("PFRO Product Salinity Degradation (mg/L)")
+ax1[1, 2].set_xlabel("Operating Months")
+ax1[1, 2].grid(True, linestyle=":")
+
+plt.tight_layout()
+st.pyplot(fig1)
+
+
+# --- 9. FINANCIAL PRO FORMA & ROI MATRIX ---
 st.write("---")
 st.subheader("💰 Financial Pro Forma Asset Ledger & Investment Sizing")
-
-conv_f, ccro_f, pfro_f = technology_financial_matrix['Conventional'], technology_financial_matrix['CCRO'], technology_financial_matrix['PFRO']
-
-ccro_opex_savings = conv_f['opex'] - ccro_f['opex']
-ccro_payback = (ccro_f['capex'] - conv_f['capex']) / ccro_opex_savings if ccro_opex_savings > 0 else float('inf')
-
-pfro_opex_savings = conv_f['opex'] - pfro_f['opex']
-pfro_payback = (pfro_f['capex'] - conv_f['capex']) / pfro_opex_savings if pfro_opex_savings > 0 else float('inf')
 
 roi_col1, roi_col2, roi_col3 = st.columns(3)
 with roi_col1:
@@ -249,7 +299,7 @@ with roi_col3:
     else:
         st.metric(label="PFRO Technology Recovery Matrix", value="No Payback", help="High water fouling constraints offset return loops vs baseline")
 
-# Tabular Data Block
+# Tabular Breakdown Matrix
 pro_forma_table_matrix = {
     "Operational Asset Metric": ["Asset Equipment Procurement (CAPEX)", "Annual Utility & Chemistry Costs (OPEX)", "Last-Stage Core Hydraulic Pressure", "End-Of-Run Permeate Quality"],
     "Conventional Framework": [f"${conv_f['capex']:,.2f}", f"${conv_f['opex']:,.2f}", f"{conv_f['p_last']:.1f} bar", f"{conv_f['tds_last']:.1f} mg/L"],
@@ -259,22 +309,19 @@ pro_forma_table_matrix = {
 st.table(pd.DataFrame(pro_forma_table_matrix).set_index("Operational Asset Metric"))
 
 
-# 8. LIFECYCLE BAR CHART RENDERING
-st.write("---")
-st.subheader("📊 Comparative Asset Portfolio Analysis")
-
-fig, ax = plt.subplots(1, 2, figsize=(14, 3.8))
+# 10. LIFECYCLE BAR CHART RENDERING
+fig2, ax2 = plt.subplots(1, 2, figsize=(14, 3.8))
 labels = ['Conventional', 'CCRO', 'PFRO']
 capexs = [conv_f['capex'], ccro_f['capex'], pfro_f['capex']]
 opexs = [conv_f['opex'], ccro_f['opex'], pfro_f['opex']]
-colors = [full_tech_registry['Conventional']['color'], full_tech_registry['CCRO']['color'], full_tech_registry['PFRO']['color']]
+colors = ['#95a5a6', '#3498db', '#2ecc71']
 
-ax[0].bar(labels, capexs, color=colors, alpha=0.85, edgecolor='black')
-ax[0].set_title("Procurement Procurement Value (CAPEX, $)")
-ax[0].grid(True, linestyle=":", alpha=0.5)
+ax2[0].bar(labels, capexs, color=colors, alpha=0.85, edgecolor='black')
+ax2[0].set_title("Total Capital Procurement Expense (CAPEX, $)")
+ax2[0].grid(True, linestyle=":", alpha=0.5)
 
-ax[1].bar(labels, opexs, color=colors, alpha=0.85, edgecolor='black')
-ax[1].set_title("Annual Running Overhead Expenditure (OPEX, $/yr)")
-ax[1].grid(True, linestyle=":", alpha=0.5)
+ax2[1].bar(labels, opexs, color=colors, alpha=0.85, edgecolor='black')
+ax2[1].set_title("Annual Operational Expenditure (OPEX, $/yr)")
+ax2[1].grid(True, linestyle=":", alpha=0.5)
 
-st.pyplot(fig)
+st.pyplot(fig2)
