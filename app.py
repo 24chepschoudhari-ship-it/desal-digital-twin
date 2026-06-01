@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Desalination Digital Twin", layout="wide")
 
 st.title("🖥️ Industrial Desalination Digital Twin")
-st.markdown("### Enterprise Operational Lifecycle, Predictive CIP Scheduling & Financial Suite")
+st.markdown("### Enterprise Operational Lifecycle, Automated Design Sizing & Engineering Suite")
 st.write("---")
 
 # Water Source Template Database
@@ -29,28 +29,20 @@ WATER_TEMPLATES = {
 # Branded Membrane Specification Database
 MEMBRANE_MANUFACTURERS = {
     "DuPont™ FilmTec™ BW30-400 (Standard Brackish)": {
-        "aw_mod": 1.00, "rejection": 0.9970, "compaction": 0.065, "leak_grow": 0.15, "cost": 480.0,
-        "desc": "Industry standard for high rejection brackish water treatment. Highly reliable."
+        "aw_mod": 1.00, "rejection": 0.9970, "compaction": 0.065, "leak_grow": 0.15, "cost": 480.0, "area": 37.2,
+        "desc": "Industry standard for high rejection brackish water treatment. 400 sq ft active area."
     },
     "DuPont™ FilmTec™ Eco PRO-400 (Low Energy)": {
-        "aw_mod": 1.35, "rejection": 0.9940, "compaction": 0.085, "leak_grow": 0.18, "cost": 540.0,
+        "aw_mod": 1.35, "rejection": 0.9940, "compaction": 0.085, "leak_grow": 0.18, "cost": 540.0, "area": 37.2,
         "desc": "High flow, low-energy brackish element engineered to slash pump power consumption."
     },
     "DuPont™ FilmTec™ SW30HRLE-400 (Seawater)": {
-        "aw_mod": 0.65, "rejection": 0.9982, "compaction": 0.035, "leak_grow": 0.08, "cost": 750.0,
+        "aw_mod": 0.65, "rejection": 0.9982, "compaction": 0.035, "leak_grow": 0.08, "cost": 750.0, "area": 37.2,
         "desc": "Premium seawater element offering high rejection at lowered feed pressures."
     },
     "Veolia (Suez) AG8040F (High Rejection Brackish)": {
-        "aw_mod": 1.05, "rejection": 0.9965, "compaction": 0.070, "leak_grow": 0.14, "cost": 460.0,
+        "aw_mod": 1.05, "rejection": 0.9965, "compaction": 0.070, "leak_grow": 0.14, "cost": 460.0, "area": 37.2,
         "desc": "Robust structural layout tailored for high-fouling industrial water loops."
-    },
-    "Hydranautics (Nitto) CPA5-LD (Ultra-High Rejection)": {
-        "aw_mod": 0.95, "rejection": 0.9975, "compaction": 0.060, "leak_grow": 0.12, "cost": 510.0,
-        "desc": "Designed with advanced low-differential spacer geometry to combat biological fouling."
-    },
-    "Hydranautics (Nitto) ESPA2-LD (Energy Saving)": {
-        "aw_mod": 1.40, "rejection": 0.9950, "compaction": 0.095, "leak_grow": 0.20, "cost": 495.0,
-        "desc": "Extreme high-permeability element built for low TDS wastewater reclamation."
     }
 }
 
@@ -72,10 +64,10 @@ st.sidebar.subheader("📐 Process Configuration")
 tech_view_mode = st.sidebar.selectbox("Select Display Mode", ["Compare All Schemes", "Single Scheme Focus"])
 target_tech = st.sidebar.selectbox("Select Target Technology", ["PFRO", "CCRO", "FRRO", "Conventional"]) if tech_view_mode == "Single Scheme Focus" else None
 
-st.sidebar.subheader("🎛️ Array Element Geometry")
-col_stages, col_elems = st.sidebar.columns(2)
-with col_stages: custom_stages = st.number_input("No. of Stages", min_value=1, max_value=3, value=1, step=1)
-with col_elems: custom_elements = st.number_input("Elements / Vessel", min_value=2, max_value=8, value=6, step=1)
+# --- UPGRADED DESIGN SIZING CONSTRAINT INPUTS ---
+st.sidebar.subheader("📐 Core Plant Sizing Flux Targets")
+design_flux_lmh = st.sidebar.slider("Target Average Flux (LMH, L/m²/h)", min_value=10.0, max_value=30.0, value=18.0, help="Higher flux creates smaller footprint but accelerates scaling fouling taxes.")
+custom_elements = st.sidebar.slider("Elements Loaded / Pressure Vessel", min_value=4, max_value=8, value=6, step=1)
 
 st.sidebar.subheader("🌊 Hydraulic & Thermodynamic Bounds")
 # Flow Sync
@@ -104,18 +96,15 @@ Q_feed_total, Y_user_target, T_operating = st.session_state.flow_val, st.session
 st.sidebar.subheader("🧬 Commercial Membrane Element Selector")
 mem_choice = st.sidebar.selectbox("Select Manufacturer Model", options=list(MEMBRANE_MANUFACTURERS.keys()))
 selected_mem = MEMBRANE_MANUFACTURERS[mem_choice]
-st.sidebar.info(f"ℹ️ **Model Profile:** {selected_mem['desc']}")
 
-# --- NEW: MAINTENANCE & SCHEDULE SETTINGS ---
 st.sidebar.subheader("🧼 Clean-In-Place (CIP) Schedules")
-cip_frequency_months = st.sidebar.slider("CIP Flush Interventions", min_value=2, max_value=12, value=6, help="Months between scheduled chemical recoveries.")
+cip_frequency_months = st.sidebar.slider("CIP Flush Interventions", min_value=2, max_value=12, value=6)
 cip_efficiency = st.sidebar.slider("Chemical Wash Recovery Efficiency (%)", 80.0, 100.0, 95.0, step=0.5) / 100.0
 
-st.sidebar.subheader("🎛️ Utility & Pre-Treatment Pricing")
+st.sidebar.subheader("🎛 ?? Utility Configurations")
 has_erd = st.sidebar.toggle("Deploy Isobaric Energy Recovery (ERD)", value=True)
 elec_rate = st.sidebar.number_input("Electricity Tariff ($/kWh)", 0.01, 0.50, 0.12, 0.01)
 as_chem_rate = st.sidebar.number_input("Anti-Scalant Bulk Cost ($/kg)", 1.0, 15.0, 4.50, 0.50)
-vessel_count = st.sidebar.number_input("Active Array Vessel Count", 1, 100, 12, 1)
 
 acid_choice = st.sidebar.selectbox("Acid Treatment Strategy", ["None", "Sulfuric Acid (H2SO4)", "Hydrochloric Acid (HCl)"])
 st.session_state.target_ph = st.sidebar.slider("Target Dosed pH", 5.0, 7.8, float(st.session_state.target_ph), step=0.1) if acid_choice != "None" else 7.8
@@ -151,7 +140,7 @@ dosed_so4 = st.session_state.so4_val + (ph_delta * 55.0) if acid_choice == "Sulf
 dosed_cl = cl_input + (ph_delta * 40.0) if acid_choice == "Hydrochloric Acid (HCl)" else cl_input
 treated_chemistry = {'Na': st.session_state.na_val, 'Cl': dosed_cl, 'Ca': st.session_state.ca_val, 'SO4': dosed_so4, 'HCO3': dosed_alk}
 
-# Standard Charge Balance
+# Calculations for Chemistry Neutrals
 cations_meq = (st.session_state.na_val * 1 / 22.99) + (st.session_state.ca_val * 2 / 40.08)
 anions_meq = (dosed_cl * 1 / 35.45) + (dosed_so4 * 2 / 96.06) + (dosed_alk * 1 / 61.02)
 total_charge = cations_meq + anions_meq
@@ -162,7 +151,7 @@ with col_bal_badge:
     if abs(ion_balance_error) <= 5.0: st.success("✅ Ion Balance OK")
     else: st.error("❌ Charge Imbalance")
 with col_bal_metrics:
-    st.markdown(f"**Cations:** `{cations_meq:.2f} meq/L` | **Anions:** `{anions_meq:.2f} meq/L` | **Error:** `{ion_balance_error:.2f}%` (Target: < ±5%)")
+    st.markdown(f"**Cations:** `{cations_meq:.2f} meq/L` | **Anions:** `{anions_meq:.2f} meq/L` | **Error:** `{ion_balance_error:.2f}%`")
 with col_bal_btn:
     if abs(ion_balance_error) > 0.01 and st.button("⚖️ Auto-Balance Ions", type="primary"):
         delta_meq = cations_meq - anions_meq
@@ -171,7 +160,26 @@ with col_bal_btn:
         st.rerun()
 
 
-# 4. SIMULATION ENGINE KINETICS (HIGH RESOLUTION MONTHLY INTERPOLATION)
+# --- 4. ENGINE CORE WITH INTEGRATED GEOMETRY & SIZING SYNTHESIS ---
+q_permeate_calc = Q_feed_total * (Y_user_target / 100.0)
+required_surface_area_m2 = (q_permeate_calc * 1000.0) / design_flux_lmh
+elements_per_vessel = custom_elements
+single_element_area = selected_mem["area"]
+
+# Synthesizing physical equipment geometry count
+calculated_total_elements = int(np.ceil(required_surface_area_m2 / single_element_area))
+vessel_count = int(np.ceil(calculated_total_elements / elements_per_vessel))
+
+# Dynamic Staging Array Sizing Rules (Balances spatial hydrodynamics across array)
+if vessel_count >= 3:
+    stage1_vessels = int(np.ceil(vessel_count * 0.67))
+    stage2_vessels = max(1, vessel_count - stage1_vessels)
+    custom_stages = 2
+else:
+    stage1_vessels = vessel_count
+    stage2_vessels = 0
+    custom_stages = 1
+
 def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     log10_tds = np.log10(max(10.0, tds))
     A, B = (log10_tds - 1.0) / 10.0, -13.12 * np.log10(temp_c + 273.15) + 34.55
@@ -179,10 +187,10 @@ def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     return current_ph - ((9.3 + A + B) - (C + D))
 
 full_tech_registry = {
-    'PFRO': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 2.45, 'color': '#2ecc71', 'scale_factor': 0.090, 'target_flux': 24.5},
-    'FRRO': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 1.45, 'color': '#e67e22', 'scale_factor': 0.050, 'target_flux': 19.0},
-    'CCRO': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 1.85, 'color': '#3498db', 'scale_factor': 0.120, 'target_flux': 21.0},
-    'Conventional': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 1.25, 'color': '#95a5a6', 'scale_factor': 0.180, 'target_flux': 17.5}
+    'PFRO': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 2.45, 'color': '#2ecc71', 'scale_factor': 0.090, 'target_flux': design_flux_lmh + 4.5},
+    'FRRO': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 1.45, 'color': '#e67e22', 'scale_factor': 0.050, 'target_flux': design_flux_lmh - 1.0},
+    'CCRO': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 1.85, 'color': '#3498db', 'scale_factor': 0.120, 'target_flux': design_flux_lmh + 2.0},
+    'Conventional': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 1.25, 'color': '#95a5a6', 'scale_factor': 0.180, 'target_flux': design_flux_lmh}
 }
 
 tech_registry = {target_tech: full_tech_registry[target_tech]} if tech_view_mode == "Single Scheme Focus" and target_tech else full_tech_registry
@@ -192,8 +200,7 @@ t_kelvin_base, t_kelvin_actual = 298.15, 273.15 + T_operating
 TCF = np.exp(2640.0 * (1.0 / t_kelvin_base - 1.0 / t_kelvin_actual))
 vfd_eff, local_inlet_tds = (0.98 if abs(T_operating - 25.0) < 5 else 0.95), sum(treated_chemistry.values())
 
-# Switch tracking axis to higher resolution Months
-months_axis = np.arange(0, 49)  # 4-Year evaluation runtime
+months_axis = np.arange(0, 49)
 lifecycle_results, spatial_results = {}, {}
 max_brine_lsi, max_caso4_saturation = -99.0, 0.0
 
@@ -205,7 +212,6 @@ for tech, cfg in tech_registry.items():
     accumulated_fouling_resistance = 0.0
     
     for m in months_axis:
-        # Check if CIP scheduled flush occurs this month
         if m > 0 and m % cip_frequency_months == 0:
             accumulated_fouling_resistance *= (1.0 - cip_efficiency)
             
@@ -223,7 +229,6 @@ for tech, cfg in tech_registry.items():
         if caso4_sat > max_caso4_saturation: max_caso4_saturation = caso4_sat
         
         supersat = max(0.0, tail_lsi - 1.0) + (max(0.0, caso4_sat - gypsum_ceiling) * 0.025)
-        # Scale accumulation month over month
         accumulated_fouling_resistance += supersat * cfg['scale_factor'] * (0.05 if tech == 'CCRO' else 0.02 if tech == 'PFRO' else 0.12)
         
         avg_ndp = (cfg['target_flux'] / (1.0 + accumulated_fouling_resistance)) / Aw_base_degrade
@@ -241,7 +246,7 @@ for tech, cfg in tech_registry.items():
         
     lifecycle_results[tech] = {'p': pressures, 'sec': secs, 'tds': perm_tds}
 
-    # Spatial Vector Profiling Loop
+    # Spatial Mapping Vector
     elem_idx = np.arange(1, custom_elements + 1)
     flux_vector, tds_vector, lsi_vector = [], [], []
     current_tds, current_ca, current_alk = local_inlet_tds, treated_chemistry['Ca'], treated_chemistry['HCO3']
@@ -258,7 +263,23 @@ p_end, sec_end = lifecycle_results[primary_tech]['p'][-1], lifecycle_results[pri
 daily_volume = Q_feed_total * (Y_user_target / 100.0) * 24
 q_permeate, q_brine = Q_feed_total * (Y_user_target / 100.0), Q_feed_total - (Q_feed_total * (Y_user_target / 100.0))
 
-# --- 5. PROCESS FLOW DIAGRAM ---
+# --- 5. AUTOMATED EQUIPMENT SIZING ENGINE MATRIX DISPLAY ---
+st.subheader("📐 Automated Array Geometry Sizing Results")
+size_col1, size_col2, size_col3, size_col4 = st.columns(4)
+
+with size_col1:
+    st.metric(label="Calculated Active Element Count", value=f"{calculated_total_elements} Units", caption=f"Total Surface Area: {required_surface_area_m2:.1f} m²")
+with size_col2:
+    st.metric(label="Total Sized Pressure Vessels", value=f"{vessel_count} Vessels", caption=f"Housing {elements_per_vessel} membranes each")
+with size_col3:
+    st.metric(label="Balanced Staging Array Blueprint", value=f"{stage1_vessels} ➔ {stage2_vessels if stage2_vessels > 0 else 'None'}", caption=f"Configured layout: Stage 1 ➔ Stage 2")
+with size_col4:
+    hydraulic_power_kw = (Q_feed_total * p_end) / 36.0
+    pump_bhp_hp = (hydraulic_power_kw / 0.7457) / 0.88  # converting to horse power with mechanical shaft safety margins
+    st.metric(label="HPP Motor Frame Size Sized", value=f"{pump_bhp_hp:.1f} HP", caption=f"Absorbed Shaft Power: {hydraulic_power_kw:.1f} kW")
+
+
+# --- 6. PROCESS FLOW DIAGRAM ---
 st.subheader("🏭 Live Process Flow Diagram (PFD)")
 with st.container(border=True):
     pfd_col1, pfd_col2, pfd_col3, pfd_col4, pfd_col5 = st.columns([1, 1, 1.3, 1, 1])
@@ -271,9 +292,9 @@ with st.container(border=True):
         st.metric(label="Target pH", value=f"{st.session_state.target_ph:.2f}")
         st.caption(f"Anti-scalant: {st.session_state.as_dosage:.1f} mg/L")
     with pfd_col3:
-        st.markdown(f"### ⚡ Pump & Core\n**HPP Array**")
+        st.markdown(f"### ⚡ Pump & Core\n**HPP Array Layout**")
         st.metric(label="Discharge Pressure", value=f"{p_end:.1f} bar")
-        st.caption(f"CIP Recovery Loop: Active")
+        st.caption(f"Staging Profile Split: {stage1_vessels}:{stage2_vessels}")
     with pfd_col4:
         st.markdown("### 💧 Stream 3\n**Permeate Yield**")
         st.metric(label="Product Flow", value=f"{q_permeate:.1f} m³/h")
@@ -283,7 +304,7 @@ with st.container(border=True):
         st.metric(label="Reject Flow", value=f"{q_brine:.1f} m³/h")
         st.caption(f"Brine LSI: {max_brine_lsi:.2f}")
 
-# 6. RENDER LIVE KPI METRIC CARDS
+# 7. RENDER LIVE KPI METRIC CARDS
 st.subheader("📊 Live System Key Performance Indicators (KPIs)")
 kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
 p_start, sec_start = lifecycle_results[primary_tech]['p'][0], lifecycle_results[primary_tech]['sec'][0]
@@ -292,7 +313,7 @@ with kpi_col2: st.metric(label="Specific Energy Cost (SEC)", value=f"{sec_end:.3
 with kpi_col3: st.metric(label="Total Plant Water Yield", value=f"{daily_volume:,.0f} m³/day", delta=f"Based on {Y_user_target}% Recovery")
 with kpi_col4: st.metric(label="Vessel Structural Health State", value="Highly Stable" if max_brine_lsi < 1.5 else "Scaling Susceptible", delta=f"Max Brine LSI: {max_brine_lsi:.2f}", delta_color="normal" if max_brine_lsi < 1.5 else "inverse")
 
-# 7. SAFETY MONITORS
+# 8. SAFETY MONITORS
 st.subheader("🚨 Real-Time Safety & Fouling Guardrails")
 guardrail_healthy = True
 if max_brine_lsi > 2.2:
@@ -306,19 +327,16 @@ if max_caso4_saturation > 250.0:
 if guardrail_healthy: st.success("✅ **HYDRAULIC ENVELOPE SECURE:** All parameters fall within safe margins.")
 
 
-# --- 8. PRE-TREATMENT & EXTRA FINANCIAL MATRICES ---
+# --- 9. REAL-TIME FINANCIAL COST MATRIX ---
 st.write("---")
 st.subheader("💸 Real-Time Levelized Cost & Asset Valuation Engine")
 
 annual_water_m3 = daily_volume * 365.0
-# Pre-treatment power addition baseline (MMF + UF systems draw ~0.35 kWh/m3)
 pretreatment_sec = 0.35
 total_system_sec = sec_end + pretreatment_sec
 annual_power_kwh = total_system_sec * annual_water_m3
 annual_power_cost = annual_power_kwh * elec_rate
 
-# CIP Chemical Operational Costs ($250 per vessel wash baseline)
-total_elements = custom_stages * custom_elements * vessel_count
 annual_cip_washes = 12.0 / cip_frequency_months
 annual_cip_cost = annual_cip_washes * vessel_count * 250.0
 
@@ -327,9 +345,8 @@ daily_as_kg = (st.session_state.as_dosage / 1e6) * daily_feed_mass_kg
 annual_as_cost = daily_as_kg * 365.0 * as_chem_rate
 total_chem_cost = annual_as_cost + annual_cip_cost
 
-# Equipment Depreciation Track
-total_membrane_capex = total_elements * selected_mem["cost"]
-hydraulic_power_kw = (Q_feed_total * p_end) / 36.0
+total_elements_replaced = vessel_count * elements_per_vessel
+total_membrane_capex = total_elements_replaced * selected_mem["cost"]
 hpp_hardware_capex = 8500.0 * (hydraulic_power_kw ** 0.65) * (vessel_count / 4.0)
 annual_machinery_amortization = (hpp_hardware_capex + total_membrane_capex) / 4.0
 
@@ -343,7 +360,7 @@ with m_col3: st.metric(label="Annual Energy Bill (RO + Pre-Tx)", value=f"${annua
 with m_col4: st.metric(label="Levelized Cost of Water (LCOW)", value=f"${lcow_per_m3:.3f} per m³", delta=f"OPEX Base: ${total_calculated_opex:,.0f}/yr")
 
 
-# 9. HIGH RESOLUTION MONTHLY LIFECYCLE TAB GRAPH GENERATOR
+# 10. TAB PLOTS INTERFACE
 st.write("---")
 tab_lifecycle, tab_spatial = st.tabs(["⏳ Long-Term Lifecycle Metrics", "📐 Internal Vessel Spatial Profiling"])
 
