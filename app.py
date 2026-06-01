@@ -180,6 +180,7 @@ scada_log_data_stream = []
 
 for tech, cfg in full_tech_registry.items():
     pressures, secs, perm_tds = [], [], []
+    fluxes, lsis, sats, bhps = [], [], [], []
     accumulated_fouling_resistance = 0.0
     
     for m in months_axis:
@@ -211,11 +212,15 @@ for tech, cfg in full_tech_registry.items():
         supersat = max(0.0, tail_lsi - 1.0) + (max(0.0, caso4_sat - 120.0) * 0.025)
         accumulated_fouling_resistance += (supersat * cfg['scale_factor'] * base_fouling_multiplier) * (0.05 if tech == 'CCRO' else 0.12)
         
-        # Darcy Transport Equations using Sized Realized Flux Bounds
+        # Darcy Transport Sizing
+        current_realized_flux = realized_flux_lmh / (1.0 + (accumulated_fouling_resistance * 0.15))
         avg_ndp = (realized_flux_lmh / (1.0 + accumulated_fouling_resistance)) / Aw_actual
         spacer_friction_drop = (cfg['stages'] * cfg['elements']) * 0.35
         
         pump_p = max(5.0, avg_ndp + delta_osmotic + (spacer_friction_drop / 2.0))
+        
+        # Raw Brake Horsepower calculation base
+        calculated_bhp = ((modified_feed_flow * (pump_p * 100000)) / (3600 * 0.84)) / 1000.0
         
         pump_efficiency = 0.84
         motor_efficiency = 0.95
@@ -232,6 +237,10 @@ for tech, cfg in full_tech_registry.items():
         pressures.append(pump_p)
         secs.append(net_kw / (modified_feed_flow * rec_frac))
         perm_tds.append(local_inlet_tds * (1.0 - current_rejection))
+        fluxes.append(current_realized_flux)
+        lsis.append(tail_lsi)
+        sats.append(caso4_sat)
+        bhps.append(calculated_bhp)
         
         if (view_scope == "All Comparison Matrices Simultaneously" and tech == 'Conventional') or \
            (view_scope == "Conventional Only" and tech == 'Conventional') or \
@@ -242,7 +251,10 @@ for tech, cfg in full_tech_registry.items():
                 'lsi': tail_lsi, 'sat': caso4_sat, 'cip': is_cip_month, 'tech': tech
             })
             
-    lifecycle_curves_by_scheme[tech] = {'p': pressures, 'sec': secs, 'tds': perm_tds}
+    lifecycle_curves_by_scheme[tech] = {
+        'p': pressures, 'sec': secs, 'tds': perm_tds, 
+        'flux': fluxes, 'lsi': lsis, 'sat': sats, 'bhp': bhps
+    }
             
     annual_water_yield_m3 = (modified_feed_flow * rec_frac * 24.0) * 365.0
     base_hardware_capex = (vessels_parallel * 12500.0) + (total_installed_elements * selected_mem['cost'])
@@ -323,42 +335,53 @@ for frame in scada_log_data_stream:
 st.text_area("Terminal Console Log Summary", value=log_box_content, height=120, label_visibility="collapsed")
 
 
-# --- 10. STRUCTURAL AGING GRAPHICAL MATRIX ---
+# --- 10. EXPANDED PERFORMANCE GRAPHICAL ENGINE ---
 st.write("---")
-st.subheader(f"⏳ Long-Term 48-Month Simulation Transport Performance Profile Plots ({view_scope})")
+st.subheader(f"⏳ Long-Term 48-Month Multi-Variable Analytical Graphs ({view_scope})")
 
 if view_scope == "All Comparison Matrices Simultaneously":
-    fig1, ax1 = plt.subplots(2, 3, figsize=(16, 8.5))
+    fig1, ax1 = plt.subplots(2, 3, figsize=(16, 9))
     
+    # Row 1: Primary Transport Analytics
     ax1[0, 0].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['p'], label='Conventional', color='#95a5a6', linewidth=2)
     ax1[0, 0].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['p'], label='CCRO Loop', color='#3498db', linewidth=2)
-    ax1[0, 0].set_title("Required System Operational Pressure (bar)")
+    ax1[0, 0].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['p'], label='PFRO Optimize', color='#2ecc71', linewidth=2)
+    ax1[0, 0].set_title("Required System Operational Pressure (bar)", fontsize=10, fontweight='bold')
     ax1[0, 0].grid(True, linestyle=":")
     ax1[0, 0].legend()
 
     ax1[0, 1].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['sec'], label='Conventional', color='#95a5a6', linewidth=2)
     ax1[0, 1].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['sec'], label='CCRO Loop', color='#3498db', linewidth=2)
-    ax1[0, 1].set_title("Dynamic Specific Energy Cost (kWh/m³)")
+    ax1[0, 1].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['sec'], label='PFRO Optimize', color='#2ecc71', linewidth=2)
+    ax1[0, 1].set_title("Dynamic Specific Energy Cost (kWh/m³)", fontsize=10, fontweight='bold')
     ax1[0, 1].grid(True, linestyle=":")
 
     ax1[0, 2].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['tds'], label='Conventional', color='#95a5a6', linewidth=2)
     ax1[0, 2].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['tds'], label='CCRO Loop', color='#3498db', linewidth=2)
-    ax1[0, 2].set_title("Solute Leakage Permeate TDS (mg/L)")
+    ax1[0, 2].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['tds'], label='PFRO Optimize', color='#2ecc71', linewidth=2)
+    ax1[0, 2].set_title("Solute Leakage Permeate TDS (mg/L)", fontsize=10, fontweight='bold')
     ax1[0, 2].grid(True, linestyle=":")
 
-    ax1[1, 0].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['p'], label='PFRO Optimization', color='#2ecc71', linewidth=2)
-    ax1[1, 0].set_title("PFRO Pressure Development Curve (bar)")
+    # Row 2: Advanced Chemical/Hydrodynamic Twin Layer Diagnostics
+    ax1[1, 0].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['flux'], label='Conventional', color='#95a5a6', linestyle='--')
+    ax1[1, 0].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['flux'], label='CCRO Loop', color='#3498db', linewidth=2)
+    ax1[1, 0].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['flux'], label='PFRO Optimize', color='#2ecc71', linewidth=2)
+    ax1[1, 0].set_title("Membrane Transport Flux Decay Profile (LMH)", fontsize=10, fontweight='bold')
     ax1[1, 0].set_xlabel("Operating Months")
     ax1[1, 0].grid(True, linestyle=":")
-    ax1[1, 0].legend()
 
-    ax1[1, 1].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['sec'], label='PFRO Optimization', color='#2ecc71', linewidth=2)
-    ax1[1, 1].set_title("PFRO Specific Energy Vector (kWh/m³)")
+    ax1[1, 1].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['sat'], label='Conv CaSO4%', color='#95a5a6', alpha=0.5)
+    ax1[1, 1].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['sat'], label='CCRO CaSO4%', color='#3498db', linewidth=2)
+    ax1[1, 1].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['sat'], label='PFRO CaSO4%', color='#2ecc71', linewidth=2)
+    ax1[1, 1].set_title("Tail-Element Scaling Concentration Saturation (%)", fontsize=10, fontweight='bold')
     ax1[1, 1].set_xlabel("Operating Months")
     ax1[1, 1].grid(True, linestyle=":")
+    ax1[1, 1].legend(fontsize=8)
 
-    ax1[1, 2].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['tds'], label='PFRO Optimization', color='#2ecc71', linewidth=2)
-    ax1[1, 2].set_title("PFRO Product Quality Degradation (mg/L)")
+    ax1[1, 2].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['bhp'], label='Conventional', color='#95a5a6')
+    ax1[1, 2].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['bhp'], label='CCRO Loop', color='#3498db', linewidth=2)
+    ax1[1, 2].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['bhp'], label='PFRO Optimize', color='#2ecc71', linewidth=2)
+    ax1[1, 2].set_title("High-Pressure Pump Driver Power (BHP, kW)", fontsize=10, fontweight='bold')
     ax1[1, 2].set_xlabel("Operating Months")
     ax1[1, 2].grid(True, linestyle=":")
     
@@ -366,23 +389,39 @@ if view_scope == "All Comparison Matrices Simultaneously":
     st.pyplot(fig1)
 
 else:
-    fig1, ax1 = plt.subplots(1, 3, figsize=(16, 4.2))
+    # Highly specific advanced plots for singular technology analysis
+    fig1, ax1 = plt.subplots(1, 3, figsize=(16, 4.5))
     tech_color = full_tech_registry[display_tech]['color']
+    curves = lifecycle_curves_by_scheme[display_tech]
     
-    ax1[0].plot(months_axis, lifecycle_curves_by_scheme[display_tech]['p'], color=tech_color, linewidth=2.5, label=display_tech)
-    ax1[0].set_title(f"{display_tech} Required Feed Pressure (bar)")
+    # Plot 1: Hydraulics (Pressure vs. BHP Pump Power Requirements)
+    ax1[0].plot(months_axis, curves['p'], color=tech_color, linewidth=2.5, label='Feed Press.')
+    ax1[0].set_ylabel('Required Feed Pressure (bar)', color=tech_color)
     ax1[0].set_xlabel("Operating Months")
+    ax2 = ax1[0].twinx()
+    ax2.plot(months_axis, curves['bhp'], color='#e74c3c', linestyle=':', linewidth=2, label='Shaft BHP')
+    ax2.set_ylabel('Gross Pump Shaft Power (kW)', color='#e74c3c')
+    ax1[0].set_title(f"{display_tech}: Hydraulic Vector Sizing Symmetrical Dynamics", fontsize=10, fontweight='bold')
     ax1[0].grid(True, linestyle=":")
-    ax1[0].legend()
 
-    ax1[1].plot(months_axis, lifecycle_curves_by_scheme[display_tech]['sec'], color=tech_color, linewidth=2.5)
-    ax1[1].set_title(f"{display_tech} Specific Energy Metrics (kWh/m³)")
+    # Plot 2: Transport Sizing (SEC Energy vs Actual Permeate Flux Droop)
+    ax1[1].plot(months_axis, curves['sec'], color=tech_color, linewidth=2.5)
+    ax1[1].set_ylabel('Specific Energy Cost (kWh/m³)', color=tech_color)
     ax1[1].set_xlabel("Operating Months")
+    ax3 = ax1[1].twinx()
+    ax3.plot(months_axis, curves['flux'], color='#f39c12', linestyle='--', linewidth=1.8)
+    ax3.set_ylabel('Active Realized Flux (LMH)', color='#f39c12')
+    ax1[1].set_title(f"{display_tech}: Energy Index vs Boundary Flux Droop", fontsize=10, fontweight='bold')
     ax1[1].grid(True, linestyle=":")
 
-    ax1[2].plot(months_axis, lifecycle_curves_by_scheme[display_tech]['tds'], color=tech_color, linewidth=2.5)
-    ax1[2].set_title(f"{display_tech} Solute Leak Quality Vector (mg/L)")
+    # Plot 3: Scaling Intersections (LSI Scale Potential vs CaSO4 Thresholds)
+    ax1[2].plot(months_axis, curves['lsi'], color=tech_color, linewidth=2.5)
+    ax1[2].set_ylabel('Tail Element LSI Index', color=tech_color)
     ax1[2].set_xlabel("Operating Months")
+    ax4 = ax1[2].twinx()
+    ax4.plot(months_axis, curves['sat'], color='#9b59b6', linestyle='-.', linewidth=1.8)
+    ax4.set_ylabel('CaSO4 Saturation Balance (%)', color='#9b59b6')
+    ax1[2].set_title(f"{display_tech}: Mass Transport Solute Scaling Intersections", fontsize=10, fontweight='bold')
     ax1[2].grid(True, linestyle=":")
     
     plt.tight_layout()
