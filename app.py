@@ -229,7 +229,7 @@ daily_volume = Q_feed_total * (Y_user_target / 100.0) * 24
 q_permeate = Q_feed_total * (Y_user_target / 100.0)
 q_brine = Q_feed_total - q_permeate
 
-# --- NEW: 📈 INTERACTIVE PROCESS FLOW DIAGRAM (PFD) BLOCK ---
+# --- 5. INTERACTIVE PROCESS FLOW DIAGRAM (PFD) ---
 st.subheader("🏭 Live Process Flow Diagram (PFD)")
 with st.container(border=True):
     pfd_col1, pfd_col2, pfd_col3, pfd_col4, pfd_col5 = st.columns([1, 1, 1.3, 1, 1])
@@ -250,7 +250,6 @@ with st.container(border=True):
         st.markdown(f"### ⚡ Pump & Core\n**{primary_tech} Array**")
         st.metric(label="HPP Discharge Pressure", value=f"{p_end:.1f} bar")
         st.caption(f"Configuration: {custom_stages} Stage / {custom_elements} Elements")
-        # Visual color adaptation based on active scaling danger bounds
         pump_arrow_color = "#e74c3c" if (max_brine_lsi > 2.2 or max_caso4_saturation > 250.0) else "#2ecc71"
         st.markdown(f"<div style='text-align: center; font-size: 24px; color: {pump_arrow_color};'>➔ Split ➔</div>", unsafe_allow_html=True)
 
@@ -266,7 +265,7 @@ with st.container(border=True):
         st.caption(f"Brine LSI: {max_brine_lsi:.2f}")
         st.markdown("<div style='text-align: center; font-size: 24px; color: #e67e22;'>➔ Discharge</div>", unsafe_allow_html=True)
 
-# 5. RENDER LIVE KPI METRIC CARDS
+# 6. RENDER LIVE KPI METRIC CARDS
 st.subheader("📊 Live System Key Performance Indicators (KPIs)")
 kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
 p_start, sec_start = lifecycle_results[primary_tech]['p'][0], lifecycle_results[primary_tech]['sec'][0]
@@ -278,7 +277,7 @@ with kpi_col4:
     status_text = "Highly Stable" if max_brine_lsi < 1.5 else "Scaling Susceptible"
     st.metric(label="Vessel Structural Health State", value=status_text, delta=f"Max Brine LSI: {max_brine_lsi:.2f}", delta_color="normal" if max_brine_lsi < 1.5 else "inverse")
 
-# 6. DIAGNOSTIC & AUTOMATED MITIGATION MONITORS
+# 7. DIAGNOSTIC & AUTOMATED MITIGATION MONITORS
 st.subheader("🚨 Real-Time Safety & Fouling Guardrails")
 guardrail_healthy = True
 
@@ -304,7 +303,7 @@ if max_caso4_saturation > 250.0:
 if guardrail_healthy:
     st.success("✅ **HYDRAULIC ENVELOPE SECURE:** All chemical saturation kinetics fall within safe anti-fouling parameters for the chosen layout profile. Membranes are running in optimal thermodynamic health.")
 
-# 7. TAB INTERFACE SETUP FOR DUAL PROFILING VIEWS
+# 8. TAB INTERFACE WITH UNPACKED LINE MATPLOTLIB PROPERTIES
 st.write("---")
 tab_lifecycle, tab_spatial = st.tabs(["⏳ Long-Term Lifecycle Metrics", "📐 Internal Vessel Spatial Profiling"])
 
@@ -316,9 +315,22 @@ with tab_lifecycle:
         ax1[0].plot(years_axis, data['p'], 'o-', color=color, linewidth=2, label=tech)
         ax1[1].plot(years_axis, data['sec'], 's-', color=color, linewidth=2, label=tech)
         ax1[2].plot(years_axis, data['tds'], 'D-', color=color, linewidth=2, label=tech)
-    ax1[0].set_title("Required Pump Pressure (bar)"), ax1[0].set_xlabel("Years"), ax1[0].grid(True, linestyle=":"), ax1[0].legend()
-    ax1[1].set_title("Specific Energy Cost (kWh/m³)"), ax1[1].set_xlabel("Years"), ax1[1].grid(True, linestyle=":")
-    ax1[2].set_title("Permeate Product Water TDS (mg/L)"), ax1[2].set_xlabel("Years"), ax1[2].axhline(500.0, color='red', linestyle='--', alpha=0.7, label='WHO Cap'), ax1[2].grid(True, linestyle=":"), ax1[2].legend()
+        
+    ax1[0].set_title("Required Pump Pressure (bar)")
+    ax1[0].set_xlabel("Years")
+    ax1[0].grid(True, linestyle=":")
+    ax1[0].legend()
+    
+    ax1[1].set_title("Specific Energy Cost (kWh/m³)")
+    ax1[1].set_xlabel("Years")
+    ax1[1].grid(True, linestyle=":")
+    
+    ax1[2].set_title("Permeate Product Water TDS (mg/L)")
+    ax1[2].set_xlabel("Years")
+    ax1[2].axhline(500.0, color='red', linestyle='--', alpha=0.7, label='WHO Cap')
+    ax1[2].grid(True, linestyle=":")
+    ax1[2].legend()
+    
     st.pyplot(fig1)
 
 with tab_spatial:
@@ -329,7 +341,23 @@ with tab_spatial:
         ax2[0].plot(data['elem'], data['flux'], 'o-', color=color, linewidth=2, label=tech)
         ax2[1].plot(data['elem'], data['tds'], 's-', color=color, linewidth=2, label=tech)
         ax2[2].plot(data['elem'], data['lsi'], 'D-', color=color, linewidth=2, label=tech)
-    ax2[0].set_title("Local Element Flux (LMH)"), ax2[0].set_xlabel("Element Number"), ax2[0].set_xticks(np.arange(1, custom_elements + 1)), ax2[0].grid(True, linestyle=":"), ax2[0].legend()
-    ax2[1].set_title("Local Channel Stream TDS (mg/L)"), ax2[1].set_xlabel("Element Number"), ax2[1].set_xticks(np.arange(1, custom_elements + 1)), ax2[1].grid(True, linestyle=":")
-    ax2[2].set_title("Local Scaling Risk Index (LSI)"), ax2[2].set_xlabel("Element Number"), ax2[2].set_xticks(np.arange(1, custom_elements + 1)), ax2[2].axhline(1.5, color='orange', linestyle='--', alpha=0.7, label='Caution Ceiling'), ax2[2].grid(True, linestyle=":"), ax2[2].legend()
+        
+    ax2[0].set_title("Local Element Flux (LMH)")
+    ax2[0].set_xlabel("Element Number")
+    ax2[0].set_xticks(np.arange(1, custom_elements + 1))
+    ax2[0].grid(True, linestyle=":")
+    ax2[0].legend()
+    
+    ax2[1].set_title("Local Channel Stream TDS (mg/L)")
+    ax2[1].set_xlabel("Element Number")
+    ax2[1].set_xticks(np.arange(1, custom_elements + 1))
+    ax2[1].grid(True, linestyle=":")
+    
+    ax2[2].set_title("Local Scaling Risk Index (LSI)")
+    ax2[2].set_xlabel("Element Number")
+    ax2[2].set_xticks(np.arange(1, custom_elements + 1))
+    ax2[2].axhline(1.5, color='orange', linestyle='--', alpha=0.7, label='Caution Ceiling')
+    ax2[2].grid(True, linestyle=":")
+    ax2[2].legend()
+    
     st.pyplot(fig2)
