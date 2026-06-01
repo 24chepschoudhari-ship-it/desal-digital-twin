@@ -7,8 +7,8 @@ from datetime import datetime
 # 1. PAGE SETUP & STYLING
 st.set_page_config(page_title="Desalination Digital Twin", layout="wide")
 
-st.title("🖥️ Industrial Desalination Digital Twin")
-st.markdown("### Ultimate Engineering Suite: Sizing, High-Fidelity Physics, Custom System Views & ROI Payback")
+st.title("🖥️ EPC Industrial Desalination Plant & Process Simulator")
+st.markdown("### Process Engineering Sizing Suite: Fluid Hydrodynamics, Aqueous Chemistry Balancing & SCADA Telemetry")
 st.write("---")
 
 # Water Source Template Database
@@ -25,13 +25,13 @@ WATER_TEMPLATES = {
     }
 }
 
-# Branded Membrane Specification Database
+# Branded Membrane Specification Database with Geometric Constants
 MEMBRANE_MANUFACTURERS = {
     "DuPont™ FilmTec™ BW30-400 (Standard Brackish)": {
-        "aw_mod": 1.00, "rejection": 0.9970, "compaction": 0.065, "leak_grow": 0.15, "cost": 480.0, "area": 37.2
+        "aw_mod": 1.00, "rejection": 0.9970, "compaction": 0.065, "leak_grow": 0.15, "cost": 480.0, "area": 37.2, "spacer_mil": 34
     },
     "DuPont™ FilmTec™ Eco PRO-400 (Low Energy)": {
-        "aw_mod": 1.35, "rejection": 0.9940, "compaction": 0.085, "leak_grow": 0.18, "cost": 540.0, "area": 37.2
+        "aw_mod": 1.35, "rejection": 0.9940, "compaction": 0.085, "leak_grow": 0.18, "cost": 540.0, "area": 37.2, "spacer_mil": 28
     }
 }
 
@@ -47,7 +47,7 @@ if "as_dosage" not in st.session_state: st.session_state.as_dosage = 3.0
 if "prev_template" not in st.session_state: st.session_state.prev_template = "Custom / Manual Input"
 
 # 2. SIDEBAR PANEL FOR INTERACTIVE SETTINGS
-st.sidebar.header("⚙️ Plant Operating Framework")
+st.sidebar.header("⚙️ Plant Sizing & Operational Framework")
 
 st.sidebar.subheader("👁️ Visualization Architecture Scope")
 view_scope = st.sidebar.selectbox(
@@ -55,15 +55,16 @@ view_scope = st.sidebar.selectbox(
     options=["All Comparison Matrices Simultaneously", "Conventional Only", "CCRO Only", "PFRO Only"]
 )
 
-st.sidebar.subheader("📐 Sizing & Array Configuration")
-design_flux_lmh = st.sidebar.slider("Target Average Flux (LMH)", min_value=10.0, max_value=30.0, value=18.0)
-custom_elements = st.sidebar.slider("Elements Loaded / Pressure Vessel", min_value=4, max_value=8, value=6, step=1)
+st.sidebar.subheader("📐 Mechanical Sizing Parameters")
+design_flux_lmh = st.sidebar.slider("Target Average Design Flux (LMH)", min_value=10.0, max_value=30.0, value=17.5, step=0.5)
+custom_elements = st.sidebar.slider("Elements per Pressure Vessel (NV)", min_value=4, max_value=8, value=6, step=1)
+vessels_parallel = st.sidebar.slider("Parallel Vessel Train Count (PV)", min_value=2, max_value=60, value=16, step=1)
 
-st.sidebar.subheader("🌊 Hydraulic & Thermodynamic Bounds")
+st.sidebar.subheader("🌊 Hydraulic Bounds")
 if "flow_val" not in st.session_state: st.session_state.flow_val = 346.4
-Q_feed_total = st.sidebar.slider("Feed Flow Rate (Q₀, m³/h)", 50.0, 600.0, float(st.session_state.flow_val), step=10.0)
-Y_user_target = st.sidebar.slider("Target Recovery Goal (Y, %)", 40.0, 96.0, 75.0, step=0.5)
-T_operating = st.sidebar.slider("Operating Temp (°C)", 5.0, 45.0, 25.0, step=1.0)
+Q_feed_total = st.sidebar.slider("Feed Inflow Capacity (Q₀, m³/h)", 50.0, 600.0, float(st.session_state.flow_val), step=10.0)
+Y_user_target = st.sidebar.slider("Recovery Configuration (Y, %)", 40.0, 96.0, 75.0, step=0.5)
+T_operating = st.sidebar.slider("Operating Process Temperature (°C)", 5.0, 45.0, 25.0, step=1.0)
 
 st.sidebar.subheader("🧬 Membrane Selection")
 mem_choice = st.sidebar.selectbox("Select Model Matrix", options=list(MEMBRANE_MANUFACTURERS.keys()))
@@ -73,7 +74,7 @@ st.sidebar.subheader("🧼 Maintenance Sweeps")
 cip_frequency_months = st.sidebar.slider("CIP Flush Interventions", min_value=2, max_value=12, value=6)
 has_erd = st.sidebar.toggle("Deploy Isobaric Energy Recovery (ERD)", value=True)
 
-st.sidebar.subheader("🎛️ Utility & Chemical Tariffs")
+st.sidebar.subheader("🎛️ Utility Costs")
 elec_rate = st.sidebar.number_input("Electricity Tariff ($/kWh)", 0.01, 0.50, 0.12, 0.01)
 as_chem_rate = st.sidebar.number_input("Anti-Scalant Bulk Cost ($/kg)", 1.0, 15.0, 4.50, 0.50)
 
@@ -94,9 +95,9 @@ base_leak_growth_modifier = 4.5 if fail_sbs_pump else 1.0
 base_fouling_multiplier = 5.0 if fail_algae_bloom else 1.0
 
 
-# 4. WATER CHEMISTRY INTERFACE & DOSING ENGINE
+# 4. WATER CHEMISTRY INTERFACE & EQUILIBRIUM DOSING ENGINE
 st.write("---")
-st.subheader("💧 Raw Water Influent Chemistry")
+st.subheader("💧 Raw Water Influent Chemistry & Aqueous Equilibrium Calculations")
 selected_template = st.selectbox("📂 Select Feed Source Template Preset", options=list(WATER_TEMPLATES.keys()), index=list(WATER_TEMPLATES.keys()).index(st.session_state.prev_template))
 
 if selected_template != st.session_state.prev_template and WATER_TEMPLATES[selected_template] is not None:
@@ -112,20 +113,40 @@ with col_ca: ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", 0.0, 50000.0,
 with col_so4: so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", 0.0, 50000.0, float(st.session_state.so4_val), 10.0)
 with col_alk: alk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", 0.0, 50000.0, float(st.session_state.alk_val), 5.0)
 
+# Real-time Electro-neutrality Charge Balance Validator
+meq_cations = (na_input * 1 / 22.99) + (ca_input * 2 / 40.08)
+meq_anions = (cl_input * 1 / 35.45) + (so4_input * 2 / 96.06) + (alk_input * 1 / 61.02)
+total_charge_pool = meq_cations + meq_anions
+charge_balance_error_pct = ((meq_cations - meq_anions) / (total_charge_pool if total_charge_pool > 0 else 1.0)) * 100.0
+
 ph_delta = max(0.0, 7.8 - st.session_state.target_ph)
-dosed_alk = st.session_state.alk_val * max(0.10, 1.0 - (ph_delta * 0.45))
-dosed_so4 = st.session_state.so4_val + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else st.session_state.so4_val
-treated_chemistry = {'Na': st.session_state.na_val, 'Cl': cl_input, 'Ca': st.session_state.ca_val, 'SO4': dosed_so4, 'HCO3': dosed_alk}
+dosed_alk = alk_input * max(0.10, 1.0 - (ph_delta * 0.45))
+dosed_so4 = so4_input + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_input
+treated_chemistry = {'Na': na_input, 'Cl': cl_input, 'Ca': ca_input, 'SO4': dosed_so4, 'HCO3': dosed_alk}
 
 local_inlet_tds = sum(treated_chemistry.values())
 
 
-# --- 5. INDUSTRIAL-GRADE HIGH-FIDELITY RO PROCESS ENGINE ---
-q_permeate_calc = modified_feed_flow * (Y_user_target / 100.0)
-required_surface_area_m2 = (q_permeate_calc * 1000.0) / design_flux_lmh
-calculated_total_elements = int(np.ceil(required_surface_area_m2 / selected_mem["area"]))
-vessel_count = int(np.ceil(calculated_total_elements / custom_elements))
+# --- 5. MECHANICAL PROCESS SIZING CALCULATOR ENGINE ---
+total_installed_elements = vessels_parallel * custom_elements
+total_active_surface_area_m2 = total_installed_elements * selected_mem["area"]
 
+# Compute Realized Operating Flux based on physical configuration: J = Q_permeate / Area
+actual_q_permeate = modified_feed_flow * (Y_user_target / 100.0)
+realized_flux_lmh = (actual_q_permeate * 1000.0) / total_active_surface_area_m2
+
+# Hydrodynamic Element Velocity Computations (Cross-sectional feed flow channels)
+spacer_thickness_meters = (selected_mem["spacer_mil"] * 2.54e-5)
+vessel_inner_diameter_meters = 0.20  # Standard 8-inch high pressure vessel
+cross_sectional_flow_area = (np.pi * (vessel_inner_diameter_meters / 2)**2) * 0.55  # 55% porosity approximation
+feed_flow_per_vessel_m3_s = (modified_feed_flow / vessels_parallel) / 3600.0
+inlet_crossflow_velocity_m_s = feed_flow_per_vessel_m3_s / cross_sectional_flow_area
+
+# Fluid density sizing mapping
+fluid_density_kg_m3 = 1000.0 + (0.75 * (local_inlet_tds / 1000.0))
+
+
+# --- 6. HIGH-FIDELITY CHEMICAL TRANSLATION & TRANSPORT PIPELINE ---
 def calculate_osmotic_pressure(chem_dict, concentration_factor, temp_c):
     mol_weights = {'Na': 22.99, 'Cl': 35.45, 'Ca': 40.08, 'SO4': 96.06, 'HCO3': 61.02}
     total_molarity = 0.0
@@ -143,14 +164,16 @@ def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     return current_ph - ((9.3 + A + B) - (C + D))
 
 full_tech_registry = {
-    'Conventional': {'stages': 2, 'elements': custom_elements, 'Aw': 1.25, 'color': '#95a5a6', 'scale_factor': 0.180, 'target_flux': design_flux_lmh, 'premium_capex_mult': 1.0},
-    'CCRO': {'stages': 1, 'elements': custom_elements, 'Aw': 1.85, 'color': '#3498db', 'scale_factor': 0.120, 'target_flux': design_flux_lmh + 2.0, 'premium_capex_mult': 1.28},
-    'PFRO': {'stages': 2, 'elements': custom_elements, 'Aw': 2.45, 'color': '#2ecc71', 'scale_factor': 0.090, 'target_flux': design_flux_lmh + 4.5, 'premium_capex_mult': 1.15}
+    'Conventional': {'stages': 2, 'elements': custom_elements, 'Aw': 1.25, 'color': '#95a5a6', 'scale_factor': 0.180, 'premium_capex_mult': 1.0},
+    'CCRO': {'stages': 1, 'elements': custom_elements, 'Aw': 1.85, 'color': '#3498db', 'scale_factor': 0.120, 'premium_capex_mult': 1.28},
+    'PFRO': {'stages': 2, 'elements': custom_elements, 'Aw': 2.45, 'color': '#2ecc71', 'scale_factor': 0.090, 'premium_capex_mult': 1.15}
 }
 
-TCF = np.exp(3020.0 * (1.0 / 298.15 - 1.0 / (273.15 + T_operating)))
-months_axis = np.arange(0, 49)
+viscosity_25 = 0.890  # cP
+viscosity_T = 1.002 * np.exp(1.1709 * (20 - T_operating) / (T_operating + 96))
+TCF = viscosity_25 / viscosity_T
 
+months_axis = np.arange(0, 49)
 technology_financial_matrix = {}
 lifecycle_curves_by_scheme = {}
 scada_log_data_stream = []
@@ -173,7 +196,7 @@ for tech, cfg in full_tech_registry.items():
         conc_factor_avg = 1.0 if tech == 'CCRO' else (1.0 + (1.0 / (1.0 - rec_frac))) / 2.0
         conc_factor_tail = 1.0 / max(0.01, 1.0 - rec_frac)
         
-        concentration_polarization_factor = 1.12 + (0.005 * cfg['target_flux'])
+        concentration_polarization_factor = np.exp(realized_flux_lmh / (3600 * 0.00025))
         
         osmotic_feed = calculate_osmotic_pressure(treated_chemistry, 1.0, T_operating)
         osmotic_avg = calculate_osmotic_pressure(treated_chemistry, conc_factor_avg, T_operating) * concentration_polarization_factor
@@ -188,7 +211,8 @@ for tech, cfg in full_tech_registry.items():
         supersat = max(0.0, tail_lsi - 1.0) + (max(0.0, caso4_sat - 120.0) * 0.025)
         accumulated_fouling_resistance += (supersat * cfg['scale_factor'] * base_fouling_multiplier) * (0.05 if tech == 'CCRO' else 0.12)
         
-        avg_ndp = (cfg['target_flux'] / (1.0 + accumulated_fouling_resistance)) / Aw_actual
+        # Darcy Transport Equations using Sized Realized Flux Bounds
+        avg_ndp = (realized_flux_lmh / (1.0 + accumulated_fouling_resistance)) / Aw_actual
         spacer_friction_drop = (cfg['stages'] * cfg['elements']) * 0.35
         
         pump_p = max(5.0, avg_ndp + delta_osmotic + (spacer_friction_drop / 2.0))
@@ -221,19 +245,17 @@ for tech, cfg in full_tech_registry.items():
     lifecycle_curves_by_scheme[tech] = {'p': pressures, 'sec': secs, 'tds': perm_tds}
             
     annual_water_yield_m3 = (modified_feed_flow * rec_frac * 24.0) * 365.0
-    base_hardware_capex = (vessel_count * 12500.0) + (calculated_total_elements * selected_mem['cost'])
+    base_hardware_capex = (vessels_parallel * 12500.0) + (total_installed_elements * selected_mem['cost'])
     total_capex = base_hardware_capex * cfg['premium_capex_mult']
     
     annual_power_opex = (np.mean(secs) * annual_water_yield_m3) * elec_rate
-    annual_chemical_opex = (((st.session_state.as_dosage / 1e6) * (modified_feed_flow * 24 * 1000)) * 365.0 * as_chem_rate) + ((12/cip_frequency_months) * vessel_count * 200.0)
+    annual_chemical_opex = (((st.session_state.as_dosage / 1e6) * (modified_feed_flow * 24 * 1000)) * 365.0 * as_chem_rate) + ((12/cip_frequency_months) * vessels_parallel * 200.0)
     
     technology_financial_matrix[tech] = {
         'capex': total_capex, 'opex': annual_power_opex + annual_chemical_opex,
         'p_last': pressures[-1], 'sec_last': secs[-1], 'tds_last': perm_tds[-1]
     }
 
-
-# Determine active telemetry framework for display panel
 display_tech = 'Conventional'
 if view_scope == "CCRO Only": display_tech = 'CCRO'
 if view_scope == "PFRO Only": display_tech = 'PFRO'
@@ -243,43 +265,48 @@ active_sec = technology_financial_matrix[display_tech]['sec_last']
 active_tds = technology_financial_matrix[display_tech]['tds_last']
 
 
-# --- 6. AUTOMATED DIAGNOSTICS & ALARM BANNERS ---
+# --- 7. AUTOMATED DIAGNOSTICS & MECHANICAL SAFETIES ---
 st.write("---")
-st.subheader(f"🛡️ Digital Twin Automated Diagnostic System ({display_tech} Active Monitor)")
+st.subheader(f"🛡️ Digital Twin Sizing & Process Diagnostics ({display_tech} Active Monitor)")
 
 has_errors = False
+if realized_flux_lmh > 25.0:
+    st.error(f"🚨 **FLUX EXCURSION LIMIT:** Sized array yields operating flux of **{realized_flux_lmh:.1f} LMH**. High risk of rapid cake fouling. Increase parallel vessel count (PV).")
+    has_errors = True
+elif realized_flux_lmh < 11.0:
+    st.warning(f"⚠️ **OVER-SIZED FOOTPRINT DETECTED:** Operating flux fell to **{realized_flux_lmh:.1f} LMH**. Capital expenditure underutilized.")
+
+if inlet_crossflow_velocity_m_s < 0.08:
+    st.warning(f"⚠️ **LOW CONCENTRATE CROSS-FLOW:** Linear velocity fell to **{inlet_crossflow_velocity_m_s:.3f} m/s**. Concentration polarization layer will destabilize.")
+elif inlet_crossflow_velocity_m_s > 0.45:
+    st.error(f"🚨 **EROSION VELOCITY BREACH:** Input crossflow velocity hit **{inlet_crossflow_velocity_m_s:.3f} m/s**. Physical spacer destruction imminent.")
+
 if active_p > 68.0:
-    st.error(f"🚨 **CRITICAL OVERPRESSURE ({display_tech}):** Feed pressure crested to **{active_p:.1f} bar**. Membrane physical crush hazard limit imminent! Lower the baseline recovery goal target.")
-    has_errors = True
-if len(scada_log_data_stream) > 0 and scada_log_data_stream[-1]['sat'] > 140.0 and st.session_state.as_dosage < 4.0:
-    st.warning(f"⚠️ **SCALING RISK DETECTED:** Core element tail concentration saturation is critical at **{scada_log_data_stream[-1]['sat']:.1f}%**. Increase anti-scalant flow limits.")
-    has_errors = True
-if active_tds > 500.0:
-    st.error(f"❌ **PERMEATE PRODUCT QUALITY BREACH:** Output stream salinity hit **{active_tds:.1f} mg/L**. High salt transport gradient indicates seal leaks or element breakdown.")
+    st.error(f"🚨 **CRITICAL OVERPRESSURE:** Required net feed pressure crested to **{active_p:.1f} bar**, exceeding physical element crush boundaries.")
     has_errors = True
 
 if not has_errors:
-    st.success(f"✅ **ALL HYDRAULIC SYSTEMS NOMINAL ({display_tech}):** Structural boundaries performing inside standard ASME / ASTM operational limits.")
+    st.success(f"✅ **MECHANICAL SIZING STABLE ({display_tech}):** Fluid velocities and flux boundaries configured within safe parameters.")
 
 
-# --- 7. PLANT LIVE PROCESS FLOW DIAGRAM (PFD) METRICS ---
+# --- 8. PLANT SIZING AND PROCESS STREAM METRICS ---
 st.write("---")
-st.subheader(f"🏭 Plant Live Process Flow Diagram (PFD) Streamwise Metrics — {display_tech} Architecture")
-pfd_col1, pfd_col2, pfd_col3, pfd_col4 = st.columns(4)
+st.subheader(f"📐 Plant Structural Sizing and Process Stream Metrics — {display_tech} Active")
+sz_col1, sz_col2, sz_col3, sz_col4 = st.columns(4)
 
-with pfd_col1:
-    st.metric(label="Feed Inflow Stream (Q₀)", value=f"{modified_feed_flow:.1f} m³/h", delta="-40% Valve Jam" if fail_valve_jam else None, delta_color="inverse")
-with pfd_col2:
-    st.metric(label="High-Pressure Pump Discharge", value=f"{active_p:.1f} bar", delta=f"+{active_p - lifecycle_curves_by_scheme[display_tech]['p'][0]:.1f} bar Scale" if fail_algae_bloom else None, delta_color="inverse")
-with pfd_col3:
-    st.metric(label="Net Specific Energy Draw", value=f"{active_sec:.3f} kWh/m³")
-with pfd_col4:
-    st.metric(label="Product Permeate Salinity", value=f"{active_tds:.1f} mg/L", delta="Oxidized Membrane" if fail_sbs_pump else None, delta_color="inverse")
+with sz_col1:
+    st.metric(label="Total Active Surface Area", value=f"{total_active_surface_area_m2:,.1f} m²", delta=f"{total_installed_elements} Elements Sized")
+with sz_col2:
+    st.metric(label="Operating Saturated Flux", value=f"{realized_flux_lmh:.1f} LMH", delta=f"Target: {design_flux_lmh} LMH", delta_color="off")
+with sz_col3:
+    st.metric(label="Inlet Crossflow Linear Velocity", value=f"{inlet_crossflow_velocity_m_s:.3f} m/s", help="Minimum target threshold: > 0.08 m/s")
+with sz_col4:
+    st.metric(label="High Pressure Pump Shaft Power", value=f"{((modified_feed_flow * (active_p * 100000)) / (3600 * 0.84)) / 1000:.1f} kW_m", help="Net hydraulic motor sizing requirement before ERD feedback calculation loop.")
 
 
-# --- 8. SCADA CONSOLE LOGGER ---
+# --- 9. SCADA CONSOLE LOGGER ---
 st.write("---")
-st.subheader("📟 SCADA Distributed Control System (DCS) Live Operational Shift Log")
+st.subheader("📟 SCADA Distributed Control System (DCS) Live Sizing Operational Shift Log")
 log_box_content = ""
 current_timestamp = datetime.now().strftime("%H:%M:%S")
 
@@ -287,55 +314,51 @@ for frame in scada_log_data_stream:
     m = frame['month']
     t_name = frame['tech']
     time_prefix = f"[{current_timestamp} | Month {m:02d} | {t_name}]"
-    if m == 0: log_box_content += f"🟢 {time_prefix} SYSTEM: Initialization sequence online. Balancing arrays loaded.\n"
+    if m == 0: log_box_content += f"🟢 {time_prefix} INITIALIZATION: Geometric constraints mapped. Sized Area = {total_active_surface_area_m2:.1f} m².\n"
     if m == 1:
-        if fail_valve_jam: log_box_content += f"🔴 {time_prefix} VALVE FAILURE: Flow choked. Actuator feedback error alert.\n"
-        if fail_sbs_pump: log_box_content += f"🔴 {time_prefix} SCADA ALARM: Free oxidant bypass detected! Breakdown risk.\n"
-        if fail_algae_bloom: log_box_content += f"⚠️ {time_prefix} INTAKE NOTICE: High feed flux resistance due to raw organic bloom.\n"
-    if frame['cip']: log_box_content += f"🧼 {time_prefix} MAINTENANCE: Cleaning sweep successfully restored core flux permeability.\n"
-    if frame['p'] > 65.0: log_box_content += f"🔴 {time_prefix} PRESSURE WARN: High pump load head reaching upper threshold at {frame['p']:.1f} bar.\n"
+        if realized_flux_lmh > 24: log_box_content += f"⚠️ {time_prefix} HIGH FLUX WARNING: Membrane elements entering severe concentration polarization regimes.\n"
+        if inlet_crossflow_velocity_m_s < 0.08: log_box_content += f"🔴 {time_prefix} VELOCITY LOW: Flow bypass detected. Channel fouling acceleration forecast.\n"
+    if frame['cip']: log_box_content += f"🧼 {time_prefix} MAINTENANCE: Core element Clean-In-Place sweep restored nominal element flux profiles.\n"
 
-st.text_area("Terminal Console Log Summary", value=log_box_content, height=130, label_visibility="collapsed")
+st.text_area("Terminal Console Log Summary", value=log_box_content, height=120, label_visibility="collapsed")
 
 
-# --- 9. STRUCTURAL AGING GRAPHICAL MATRIX ---
+# --- 10. STRUCTURAL AGING GRAPHICAL MATRIX ---
 st.write("---")
-st.subheader(f"⏳ Long-Term 48-Month Structural Aging Analysis Graphs ({view_scope})")
+st.subheader(f"⏳ Long-Term 48-Month Simulation Transport Performance Profile Plots ({view_scope})")
 
 if view_scope == "All Comparison Matrices Simultaneously":
     fig1, ax1 = plt.subplots(2, 3, figsize=(16, 8.5))
     
-    # Row 1: Conventional vs CCRO Matrix Comparison
     ax1[0, 0].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['p'], label='Conventional', color='#95a5a6', linewidth=2)
     ax1[0, 0].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['p'], label='CCRO Loop', color='#3498db', linewidth=2)
-    ax1[0, 0].set_title("Required Discharge Pressure (bar)")
+    ax1[0, 0].set_title("Required System Operational Pressure (bar)")
     ax1[0, 0].grid(True, linestyle=":")
     ax1[0, 0].legend()
 
     ax1[0, 1].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['sec'], label='Conventional', color='#95a5a6', linewidth=2)
     ax1[0, 1].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['sec'], label='CCRO Loop', color='#3498db', linewidth=2)
-    ax1[0, 1].set_title("Specific Energy Cost (kWh/m³)")
+    ax1[0, 1].set_title("Dynamic Specific Energy Cost (kWh/m³)")
     ax1[0, 1].grid(True, linestyle=":")
 
     ax1[0, 2].plot(months_axis, lifecycle_curves_by_scheme['Conventional']['tds'], label='Conventional', color='#95a5a6', linewidth=2)
     ax1[0, 2].plot(months_axis, lifecycle_curves_by_scheme['CCRO']['tds'], label='CCRO Loop', color='#3498db', linewidth=2)
-    ax1[0, 2].set_title("Permeate Stream Quality TDS (mg/L)")
+    ax1[0, 2].set_title("Solute Leakage Permeate TDS (mg/L)")
     ax1[0, 2].grid(True, linestyle=":")
 
-    # Row 2: Dedicated Isolated PFRO Vector Tracking
     ax1[1, 0].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['p'], label='PFRO Optimization', color='#2ecc71', linewidth=2)
-    ax1[1, 0].set_title("PFRO Hydraulic Curve (bar)")
+    ax1[1, 0].set_title("PFRO Pressure Development Curve (bar)")
     ax1[1, 0].set_xlabel("Operating Months")
     ax1[1, 0].grid(True, linestyle=":")
     ax1[1, 0].legend()
 
     ax1[1, 1].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['sec'], label='PFRO Optimization', color='#2ecc71', linewidth=2)
-    ax1[1, 1].set_title("PFRO Energy Vector (kWh/m³)")
+    ax1[1, 1].set_title("PFRO Specific Energy Vector (kWh/m³)")
     ax1[1, 1].set_xlabel("Operating Months")
     ax1[1, 1].grid(True, linestyle=":")
 
     ax1[1, 2].plot(months_axis, lifecycle_curves_by_scheme['PFRO']['tds'], label='PFRO Optimization', color='#2ecc71', linewidth=2)
-    ax1[1, 2].set_title("PFRO Product Salinity Degradation (mg/L)")
+    ax1[1, 2].set_title("PFRO Product Quality Degradation (mg/L)")
     ax1[1, 2].set_xlabel("Operating Months")
     ax1[1, 2].grid(True, linestyle=":")
     
@@ -343,23 +366,22 @@ if view_scope == "All Comparison Matrices Simultaneously":
     st.pyplot(fig1)
 
 else:
-    # Single Dedicated Architecture High-Res Viewport Sizing
     fig1, ax1 = plt.subplots(1, 3, figsize=(16, 4.2))
     tech_color = full_tech_registry[display_tech]['color']
     
     ax1[0].plot(months_axis, lifecycle_curves_by_scheme[display_tech]['p'], color=tech_color, linewidth=2.5, label=display_tech)
-    ax1[0].set_title(f"{display_tech} Core Pressure Array (bar)")
+    ax1[0].set_title(f"{display_tech} Required Feed Pressure (bar)")
     ax1[0].set_xlabel("Operating Months")
     ax1[0].grid(True, linestyle=":")
     ax1[0].legend()
 
     ax1[1].plot(months_axis, lifecycle_curves_by_scheme[display_tech]['sec'], color=tech_color, linewidth=2.5)
-    ax1[1].set_title(f"{display_tech} Specific Energy consumption (kWh/m³)")
+    ax1[1].set_title(f"{display_tech} Specific Energy Metrics (kWh/m³)")
     ax1[1].set_xlabel("Operating Months")
     ax1[1].grid(True, linestyle=":")
 
     ax1[2].plot(months_axis, lifecycle_curves_by_scheme[display_tech]['tds'], color=tech_color, linewidth=2.5)
-    ax1[2].set_title(f"{display_tech} Permeate Salinity (mg/L)")
+    ax1[2].set_title(f"{display_tech} Solute Leak Quality Vector (mg/L)")
     ax1[2].set_xlabel("Operating Months")
     ax1[2].grid(True, linestyle=":")
     
@@ -367,59 +389,18 @@ else:
     st.pyplot(fig1)
 
 
-# --- 10. FINANCIAL PRO FORMA & ROI MATRIX ---
+# --- 11. FINANCIAL PRO FORMA & PROCESS LEDGER ---
 st.write("---")
-st.subheader("💰 Financial Pro Forma Asset Ledger & Investment Sizing")
+st.subheader("💰 Process Asset Ledger & System Sizing Cost Matrix")
 
 conv_f = technology_financial_matrix.get('Conventional', {'capex': 0, 'opex': 0, 'p_last': 0, 'sec_last': 0, 'tds_last': 0})
 ccro_f = technology_financial_matrix.get('CCRO', {'capex': 0, 'opex': 0, 'p_last': 0, 'sec_last': 0, 'tds_last': 0})
 pfro_f = technology_financial_matrix.get('PFRO', {'capex': 0, 'opex': 0, 'p_last': 0, 'sec_last': 0, 'tds_last': 0})
 
-ccro_opex_savings = conv_f['opex'] - ccro_f['opex']
-ccro_payback = (ccro_f['capex'] - conv_f['capex']) / ccro_opex_savings if ccro_opex_savings > 0 else float('inf')
-
-pfro_opex_savings = conv_f['opex'] - pfro_f['opex']
-pfro_payback = (pfro_f['capex'] - conv_f['capex']) / pfro_opex_savings if pfro_opex_savings > 0 else float('inf')
-
-roi_col1, roi_col2, roi_col3 = st.columns(3)
-with roi_col1:
-    st.metric(label="Conventional Baseline Footprint", value=f"${conv_f['capex']:,.0f} CAPEX", help=f"Annualized Baseline OPEX: ${conv_f['opex']:,.0f}/yr")
-with roi_col2:
-    if ccro_payback != float('inf') and ccro_payback > 0:
-        st.metric(label="CCRO Architecture Premium Matrix", value=f"{ccro_payback:.2f} Yr Payback", delta=f"${ccro_opex_savings:,.0f}/yr Saved")
-    else:
-        st.metric(label="CCRO Architecture Premium Matrix", value="No Payback", help="Fouling constraints offset ROI")
-with roi_col3:
-    if pfro_payback != float('inf') and pfro_payback > 0:
-        st.metric(label="PFRO Technology Recovery Matrix", value=f"{pfro_payback:.2f} Yr Payback", delta=f"${pfro_opex_savings:,.0f}/yr Saved")
-    else:
-        st.metric(label="PFRO Technology Recovery Matrix", value="No Payback", help="Fouling constraints offset ROI")
-
 pro_forma_table_matrix = {
-    "Operational Asset Metric": ["Asset Equipment Procurement (CAPEX)", "Annual Utility & Chemistry Costs (OPEX)", "Last-Stage Core Hydraulic Pressure", "End-Of-Run Permeate Quality"],
+    "Sized Process Asset Design Metric": ["System Capital Asset Procurement (CAPEX)", "Annualized Utility & Chemistry Costs (OPEX)", "End-of-Run Driving Pressure Limit", "End-of-Run Permeate Product TDS"],
     "Conventional Framework": [f"${conv_f['capex']:,.2f}", f"${conv_f['opex']:,.2f}", f"{conv_f['p_last']:.1f} bar", f"{conv_f['tds_last']:.1f} mg/L"],
     "CCRO Loop Blueprint": [f"${ccro_f['capex']:,.2f}", f"${ccro_f['opex']:,.2f}", f"{ccro_f['p_last']:.1f} bar", f"{ccro_f['tds_last']:.1f} mg/L"],
     "PFRO Sequence Model": [f"${pfro_f['capex']:,.2f}", f"${pfro_f['opex']:,.2f}", f"{pfro_f['p_last']:.1f} bar", f"{pfro_f['tds_last']:.1f} mg/L"]
 }
-st.table(pd.DataFrame(pro_forma_table_matrix).set_index("Operational Asset Metric"))
-
-
-# --- 11. LIFECYCLE BAR CHART RENDERING ---
-st.write("---")
-st.subheader("📊 Comparative Asset Portfolio Analysis")
-
-fig2, ax2 = plt.subplots(1, 2, figsize=(14, 3.8))
-labels = ['Conventional', 'CCRO', 'PFRO']
-capexs = [conv_f['capex'], ccro_f['capex'], pfro_f['capex']]
-opexs = [conv_f['opex'], ccro_f['opex'], pfro_f['opex']]
-colors = ['#95a5a6', '#3498db', '#2ecc71']
-
-ax2[0].bar(labels, capexs, color=colors, alpha=0.85, edgecolor='black')
-ax2[0].set_title("Total Capital Procurement Expense (CAPEX, $)")
-ax2[0].grid(True, linestyle=":", alpha=0.5)
-
-ax2[1].bar(labels, opexs, color=colors, alpha=0.85, edgecolor='black')
-ax2[1].set_title("Annual Operational Expenditure (OPEX, $/yr)")
-ax2[1].grid(True, linestyle=":", alpha=0.5)
-
-st.pyplot(fig2)
+st.table(pd.DataFrame(pro_forma_table_matrix).set_index("Sized Process Asset Design Metric"))
