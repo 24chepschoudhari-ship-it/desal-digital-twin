@@ -2,12 +2,13 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from datetime import datetime
 
 # 1. PAGE SETUP & STYLING
 st.set_page_config(page_title="Desalination Digital Twin", layout="wide")
 
 st.title("🖥️ Industrial Desalination Digital Twin")
-st.markdown("### Ultimate Engineering Suite: Sizing, Crisis Loops, SCADA Logs & ROI Payback Engine")
+st.markdown("### Ultimate Engineering Suite: Sizing, Crisis Simulation, SCADA Logs & ROI Payback Engine")
 st.write("---")
 
 # Water Source Template Database
@@ -18,6 +19,9 @@ WATER_TEMPLATES = {
     },
     "Arizona Brackish Groundwater (High Hardness)": {
         "na": 450.0, "cl": 680.0, "ca": 220.0, "so4": 410.0, "alk": 280.0
+    },
+    "Industrial Wastewater Effluent (High Alkalinity)": {
+        "na": 950.0, "cl": 1100.0, "ca": 90.0, "so4": 550.0, "alk": 650.0
     }
 }
 
@@ -25,6 +29,9 @@ WATER_TEMPLATES = {
 MEMBRANE_MANUFACTURERS = {
     "DuPont™ FilmTec™ BW30-400 (Standard Brackish)": {
         "aw_mod": 1.00, "rejection": 0.9970, "compaction": 0.065, "leak_grow": 0.15, "cost": 480.0, "area": 37.2
+    },
+    "DuPont™ FilmTec™ Eco PRO-400 (Low Energy)": {
+        "aw_mod": 1.35, "rejection": 0.9940, "compaction": 0.085, "leak_grow": 0.18, "cost": 540.0, "area": 37.2
     }
 }
 
@@ -42,7 +49,7 @@ if "prev_template" not in st.session_state: st.session_state.prev_template = "Cu
 # 2. SIDEBAR PANEL FOR INTERACTIVE SETTINGS
 st.sidebar.header("⚙️ Plant Operating Framework")
 
-st.sidebar.subheader("📐 Sizing Slices")
+st.sidebar.subheader("📐 Sizing & Array Configuration")
 design_flux_lmh = st.sidebar.slider("Target Average Flux (LMH)", min_value=10.0, max_value=30.0, value=18.0)
 custom_elements = st.sidebar.slider("Elements Loaded / Pressure Vessel", min_value=4, max_value=8, value=6, step=1)
 
@@ -52,11 +59,15 @@ Q_feed_total = st.sidebar.slider("Feed Flow Rate (Q₀, m³/h)", 50.0, 600.0, fl
 Y_user_target = st.sidebar.slider("Target Recovery Goal (Y, %)", 40.0, 96.0, 75.0, step=0.5)
 T_operating = st.sidebar.slider("Operating Temp (°C)", 5.0, 45.0, 25.0, step=1.0)
 
-selected_mem = MEMBRANE_MANUFACTURERS["DuPont™ FilmTec™ BW30-400 (Standard Brackish)"]
+st.sidebar.subheader("🧬 Membrane Selection")
+mem_choice = st.sidebar.selectbox("Select Model Matrix", options=list(MEMBRANE_MANUFACTURERS.keys()))
+selected_mem = MEMBRANE_MANUFACTURERS[mem_choice]
+
+st.sidebar.subheader("🧼 Maintenance Sweeps")
 cip_frequency_months = st.sidebar.slider("CIP Flush Interventions", min_value=2, max_value=12, value=6)
 has_erd = st.sidebar.toggle("Deploy Isobaric Energy Recovery (ERD)", value=True)
 
-st.sidebar.subheader("🎛️ Utility Tariff Adjustments")
+st.sidebar.subheader("🎛️ Utility & Chemical Tariffs")
 elec_rate = st.sidebar.number_input("Electricity Tariff ($/kWh)", 0.01, 0.50, 0.12, 0.01)
 as_chem_rate = st.sidebar.number_input("Anti-Scalant Bulk Cost ($/kg)", 1.0, 15.0, 4.50, 0.50)
 
@@ -65,7 +76,7 @@ st.session_state.target_ph = st.sidebar.slider("Target Dosed pH", 5.0, 7.8, floa
 st.session_state.as_dosage = st.sidebar.slider("Anti-Scalant Target (mg/L)", 0.0, 12.0, float(st.session_state.as_dosage), step=0.5)
 
 
-# 3. INTERACTIVE CRISIS STRESS TESTER (Maintained context across layers)
+# 3. INTERACTIVE CRISIS STRESS TESTER
 st.subheader("🚨 Interactive Plant Failure Mode Simulator")
 col_fail1, col_fail2, col_fail3 = st.columns(3)
 with col_fail1: fail_valve_jam = st.toggle("💥 Feed Valve Jam (40% Flow Drop)", value=False)
@@ -103,7 +114,7 @@ treated_chemistry = {'Na': st.session_state.na_val, 'Cl': cl_input, 'Ca': st.ses
 local_inlet_tds = sum(treated_chemistry.values())
 
 
-# 5. HIGH-FIDELITY SIMULATION COMPUTE BLOCK (Simulates all 3 modes for financial mapping)
+# 5. CORE ENGINE SIMULATION LOOP (Runs cross-comparison arrays for financials)
 q_permeate_calc = modified_feed_flow * (Y_user_target / 100.0)
 required_surface_area_m2 = (q_permeate_calc * 1000.0) / design_flux_lmh
 calculated_total_elements = int(np.ceil(required_surface_area_m2 / selected_mem["area"]))
@@ -126,17 +137,21 @@ TCF = np.exp(2640.0 * (1.0 / t_kelvin_base - 1.0 / t_kelvin_actual))
 months_axis = np.arange(0, 49)
 
 technology_financial_matrix = {}
+scada_log_data_stream = []  # Holds runtime trace events specifically for logging parse
 
 for tech, cfg in full_tech_registry.items():
-    pressures, secs = [], []
+    pressures, secs, perm_tds = [], [], []
     accumulated_fouling_resistance = 0.0
     
     for m in months_axis:
+        is_cip_month = False
         if m > 0 and m % cip_frequency_months == 0:
             accumulated_fouling_resistance *= (1.0 - 0.95)
+            is_cip_month = True
             
         yr_equivalent = m / 12.0
         Aw_base_degrade = cfg['Aw'] * selected_mem['aw_mod'] * TCF * (1.0 - selected_mem['compaction'] * np.log1p(yr_equivalent))
+        current_rejection = min(0.9995, selected_mem['rejection'] / (1.0 + (selected_mem['leak_grow'] * base_leak_growth_modifier) * yr_equivalent))
         
         conc_mult = 1.0 / max(0.01, 1.0 - (Y_user_target / 100.0))
         tail_ca = treated_chemistry['Ca'] * conc_mult
@@ -159,83 +174,107 @@ for tech, cfg in full_tech_registry.items():
             
         pressures.append(pump_p)
         secs.append(net_kw / (modified_feed_flow * (Y_user_target / 100.0)))
+        perm_tds.append(local_inlet_tds * (1.0 - current_rejection))
         
-    # Asset Ledger Sizing Calculations
+        # Save trace frame if this matches the primary active tab view scheme
+        if tech == 'Conventional':
+            scada_log_data_stream.append({
+                'month': m, 'p': pump_p, 'tds': local_inlet_tds * (1.0 - current_rejection),
+                'lsi': tail_lsi, 'sat': caso4_sat, 'cip': is_cip_month
+            })
+            
     annual_water_yield_m3 = (modified_feed_flow * (Y_user_target / 100.0) * 24.0) * 365.0
-    avg_sec = np.mean(secs)
-    
-    # Financial Sizing Models
     base_hardware_capex = (vessel_count * 12500.0) + (calculated_total_elements * selected_mem['cost'])
     total_capex = base_hardware_capex * cfg['premium_capex_mult']
     
-    annual_power_opex = (avg_sec * annual_water_yield_m3) * elec_rate
+    annual_power_opex = (np.mean(secs) * annual_water_yield_m3) * elec_rate
     annual_chemical_opex = (((st.session_state.as_dosage / 1e6) * (modified_feed_flow * 24 * 1000)) * 365.0 * as_chem_rate) + ((12/cip_frequency_months) * vessel_count * 200.0)
-    total_opex = annual_power_opex + annual_chemical_opex
     
     technology_financial_matrix[tech] = {
-        'capex': total_capex, 'opex': total_opex, 'sec': avg_sec, 'water': annual_water_yield_m3
+        'capex': total_capex, 'opex': annual_power_opex + annual_chemical_opex,
+        'p_last': pressures[-1], 'sec_last': secs[-1], 'tds_last': perm_tds[-1]
     }
 
 
-# --- 6. NEW FEATURE MODULE: ROI & PAYBACK ENGINE MATRIX ---
+# --- 6. SCADA DISTRIBUTED CONTROL PANEL LOG (From Layer 3) ---
 st.write("---")
-st.subheader("💰 Technology Financial Pro Forma & Capital Payback Asset Matrix")
+st.subheader("📟 SCADA Distributed Control System (DCS) Live Operational Shift Log")
 
-conv_f = technology_financial_matrix['Conventional']
-ccro_f = technology_financial_matrix['CCRO']
-pfro_f = technology_financial_matrix['PFRO']
+log_box_content = ""
+current_timestamp = datetime.now().strftime("%H:%M:%S")
 
-# Payback period logic (Delta CAPEX / Delta OPEX savings)
+for idx, frame in enumerate(scada_log_data_stream):
+    m = frame['month']
+    time_prefix = f"[{current_timestamp} | Month {m:02d}]"
+    
+    if m == 0:
+        log_box_content += f"🟢 {time_prefix} SYSTEM: Plant sequencing online. Configured loop footprint loaded.\n"
+    if m == 1:
+        if fail_valve_jam: log_box_content += f"🔴 {time_prefix} VALVE FAILURE: Feed line valve actuator jammed at 60% standard flow!\n"
+        if fail_sbs_pump: log_box_content += f"🔴 {time_prefix} ORP WARNING: Missing sodium bisulfite dosing. Core membrane oxidising!\n"
+        if fail_algae_bloom: log_box_content += f"⚠️ {time_prefix} INTENSIVE FOULING: Massive biological organic load shock entering intake arrays.\n"
+    if frame['lsi'] > 1.5:
+        log_box_content += f"⚠️ {time_prefix} CHEM EXCURSION: Concentrated brine LSI high at {frame['lsi']:.2f}. Scales building up.\n"
+    if frame['cip']:
+        log_box_content += f"🧼 {time_prefix} MAINTENANCE ACTION: Automated CIP wash loop execution sequence complete.\n"
+    if frame['p'] > 65.0:
+        log_box_content += f"🔴 {time_prefix} DRIVE CRITICAL: High-pressure pump head exceeding safe limit at {frame['p']:.1f} bar.\n"
+
+st.text_area("Terminal Console Log Summary", value=log_box_content, height=180, label_visibility="collapsed")
+
+
+# --- 7. ROI & CAPITAL PAYBACK PROFILE MATRIX (From Layer 4 with Fixes) ---
+st.write("---")
+st.subheader("💰 Financial Pro Forma Asset Ledger & Investment Sizing")
+
+conv_f, ccro_f, pfro_f = technology_financial_matrix['Conventional'], technology_financial_matrix['CCRO'], technology_financial_matrix['PFRO']
+
 ccro_opex_savings = conv_f['opex'] - ccro_f['opex']
-ccro_capex_premium = ccro_f['capex'] - conv_f['capex']
-ccro_payback = ccro_capex_premium / ccro_opex_savings if ccro_opex_savings > 0 else float('inf')
+ccro_payback = (ccro_f['capex'] - conv_f['capex']) / ccro_opex_savings if ccro_opex_savings > 0 else float('inf')
 
 pfro_opex_savings = conv_f['opex'] - pfro_f['opex']
-pfro_capex_premium = pfro_f['capex'] - conv_f['capex']
-pfro_payback = pfro_capex_premium / pfro_opex_savings if pfro_opex_savings > 0 else float('inf')
+pfro_payback = (pfro_f['capex'] - conv_f['capex']) / pfro_opex_savings if pfro_opex_savings > 0 else float('inf')
 
-# Render side-by-side ROI metrics
 roi_col1, roi_col2, roi_col3 = st.columns(3)
 with roi_col1:
-    st.metric(label="Conventional Base Asset Footprint", value=f"${conv_f['capex']:,.0f} CAPEX", caption=f"Baseline OPEX: ${conv_f['opex']:,.0f}/yr")
+    st.metric(label="Conventional Baseline Footprint", value=f"${conv_f['capex']:,.0f} CAPEX", help=f"Annualized Baseline OPEX: ${conv_f['opex']:,.0f}/yr")
 with roi_col2:
     if ccro_payback != float('inf') and ccro_payback > 0:
-        st.metric(label="CCRO System Return On Investment", value=f"{ccro_payback:.2f} Years Payback", delta=f"${ccro_opex_savings:,.0f}/yr Saved", delta_color="normal")
+        st.metric(label="CCRO Architecture Premium Matrix", value=f"{ccro_payback:.2f} Yr Payback", delta=f"${ccro_opex_savings:,.0f}/yr Saved")
     else:
-        st.metric(label="CCRO System Return On Investment", value="No Payback", caption="Fouling profile limits savings vs Conventional base")
+        st.metric(label="CCRO Architecture Premium Matrix", value="No Payback", help="High water fouling constraints offset return loops vs baseline")
 with roi_col3:
     if pfro_payback != float('inf') and pfro_payback > 0:
-        st.metric(label="PFRO System Return On Investment", value=f"{pfro_payback:.2f} Years Payback", delta=f"${pfro_opex_savings:,.0f}/yr Saved", delta_color="normal")
+        st.metric(label="PFRO Technology Recovery Matrix", value=f"{pfro_payback:.2f} Yr Payback", delta=f"${pfro_opex_savings:,.0f}/yr Saved")
     else:
-        st.metric(label="PFRO System Return On Investment", value="No Payback", caption="Fouling profile limits savings vs Conventional base")
+        st.metric(label="PFRO Technology Recovery Matrix", value="No Payback", help="High water fouling constraints offset return loops vs baseline")
 
-# Dataframe Breakdown Matrix
-pro_forma_data = {
-    "Financial Metric": ["Total Asset Initial CAPEX", "Annualized Operations OPEX", "Mean Specific Energy (SEC)"],
-    "Conventional Setup": [f"${conv_f['capex']:,.2f}", f"${conv_f['opex']:,.2f}", f"{conv_f['sec']:.3f} kWh/m³"],
-    "CCRO Architecture": [f"${ccro_f['capex']:,.2f}", f"${ccro_f['opex']:,.2f}", f"{ccro_f['sec']:.3f} kWh/m³"],
-    "PFRO Framework": [f"${pfro_f['capex']:,.2f}", f"${pfro_f['opex']:,.2f}", f"{pfro_f['sec']:.3f} kWh/m³"]
+# Tabular Data Block
+pro_forma_table_matrix = {
+    "Operational Asset Metric": ["Asset Equipment Procurement (CAPEX)", "Annual Utility & Chemistry Costs (OPEX)", "Last-Stage Core Hydraulic Pressure", "End-Of-Run Permeate Quality"],
+    "Conventional Framework": [f"${conv_f['capex']:,.2f}", f"${conv_f['opex']:,.2f}", f"{conv_f['p_last']:.1f} bar", f"{conv_f['tds_last']:.1f} mg/L"],
+    "CCRO Loop Blueprint": [f"${ccro_f['capex']:,.2f}", f"${ccro_f['opex']:,.2f}", f"{ccro_f['p_last']:.1f} bar", f"{ccro_f['tds_last']:.1f} mg/L"],
+    "PFRO Sequence Model": [f"${pfro_f['capex']:,.2f}", f"${pfro_f['opex']:,.2f}", f"{pfro_f['p_last']:.1f} bar", f"{pfro_f['tds_last']:.1f} mg/L"]
 }
-st.table(pd.DataFrame(pro_forma_data).set_index("Financial Metric"))
+st.table(pd.DataFrame(pro_forma_table_matrix).set_index("Operational Asset Metric"))
 
 
-# 7. COMPARATIVE METRIC PLOTS
+# 8. LIFECYCLE BAR CHART RENDERING
 st.write("---")
-st.subheader("📊 Lifecycle Financial Asset Comparison Chart")
+st.subheader("📊 Comparative Asset Portfolio Analysis")
 
-fig, ax = plt.subplots(1, 2, figsize=(15, 4.0))
-
+fig, ax = plt.subplots(1, 2, figsize=(14, 3.8))
 labels = ['Conventional', 'CCRO', 'PFRO']
 capexs = [conv_f['capex'], ccro_f['capex'], pfro_f['capex']]
 opexs = [conv_f['opex'], ccro_f['opex'], pfro_f['opex']]
 colors = [full_tech_registry['Conventional']['color'], full_tech_registry['CCRO']['color'], full_tech_registry['PFRO']['color']]
 
 ax[0].bar(labels, capexs, color=colors, alpha=0.85, edgecolor='black')
-ax[0].set_title("Total Capital Procurement Expense (CAPEX, $)")
-ax[0].grid(True, linestyle=":", alpha=0.6)
+ax[0].set_title("Procurement Procurement Value (CAPEX, $)")
+ax[0].grid(True, linestyle=":", alpha=0.5)
 
 ax[1].bar(labels, opexs, color=colors, alpha=0.85, edgecolor='black')
-ax[1].set_title("Annual Operational Expenditure (OPEX, $/yr)")
-ax[1].grid(True, linestyle=":", alpha=0.6)
+ax[1].set_title("Annual Running Overhead Expenditure (OPEX, $/yr)")
+ax[1].grid(True, linestyle=":", alpha=0.5)
 
 st.pyplot(fig)
