@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 st.set_page_config(page_title="Desalination Digital Twin", layout="wide")
 
 st.title("🖥️ Industrial Desalination Digital Twin")
-st.markdown("### Multi-Year Operational Lifecycle & Membrane Degradation Suite")
+st.markdown("### Advanced Multi-Year Operational Lifecycle & Safety Analytics Suite")
 st.write("---")
 
 # 2. SIDEBAR PANEL FOR INTERACTIVE SETTINGS
@@ -24,7 +24,7 @@ if tech_view_mode == "Single Scheme Focus":
 else:
     target_tech = None
 
-# --- NEW: CUSTOM ARRAY GEOMETRY CONFIGURATOR ---
+# Custom Array Geometry Configurator
 st.sidebar.subheader("🎛️ Array Element Geometry")
 col_stages, col_elems = st.sidebar.columns(2)
 with col_stages:
@@ -32,8 +32,7 @@ with col_stages:
 with col_elems:
     custom_elements = st.number_input("Elements / Vessel", min_value=1, max_value=8, value=6, step=1)
 
-
-# --- DUAL INPUT SYNC LOGIC FOR HYDRAULICS ---
+# Dual Input Sync Logic for Hydraulics
 st.sidebar.subheader("🌊 Hydraulic & Thermodynamic Bounds")
 
 # Sync Feed Flow
@@ -63,12 +62,10 @@ with col_t2:
     t_num = st.number_input("Value", 5.0, 45.0, float(st.session_state.temp_val), step=0.5, key="tn", label_visibility="collapsed")
 st.session_state.temp_val = t_num if t_num != st.session_state.temp_val else t_slide
 
-
-# Extract values from session state variables
+# Extract active variables
 Q_feed_total = st.session_state.flow_val
 Y_user_target = st.session_state.rec_val
 T_operating = st.session_state.temp_val
-
 
 # Membrane Specs
 st.sidebar.subheader("🧬 Membrane Specifications")
@@ -84,7 +81,7 @@ acid_choice = st.sidebar.selectbox("Acid Treatment Strategy", ["None", "Sulfuric
 target_ph = st.sidebar.slider("Target Dosed pH", 5.0, 7.8, 7.8, step=0.1) if acid_choice != "None" else 7.8
 as_dosage = st.sidebar.slider("Anti-Scalant Target (mg/L)", 0.0, 12.0, 3.0, step=0.5)
 
-# 3. MAIN INTERFACE: INFLUENT WATER CHEMISTRY ENTRY
+# 3. WATER CHEMISTRY INTERFACE
 st.subheader("💧 Raw Water Influent Chemistry")
 col_na, col_cl, col_ca, col_so4, col_alk = st.columns(5)
 
@@ -94,7 +91,7 @@ with col_ca: ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", value=180.0)
 with col_so4: so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", value=520.0)
 with col_alk: alk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", value=220.0)
 
-# 4. KINETICS & ENGINE CALCULATIONS
+# 4. SIMULATION ENGINE KINETICS
 mem_registry = {
     'Low Energy (LE)': {'aw_mod': 1.35, 'rejection': 0.993, 'compaction': 0.095, 'leak_grow': 0.22},
     'Standard Brackish (BW30)': {'aw_mod': 1.00, 'rejection': 0.997, 'compaction': 0.065, 'leak_grow': 0.15},
@@ -116,7 +113,6 @@ def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     D = np.log10(max(1.0, alkalinity * 0.82))
     return current_ph - ((9.3 + A + B) - (C + D))
 
-# Full Master Registry using custom inputs for dynamic routing
 full_tech_registry = {
     'PFRO': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 2.45, 'color': '#2ecc71', 'scale_factor': 0.090, 'target_flux': 24.5},
     'FRRO': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 1.45, 'color': '#e67e22', 'scale_factor': 0.050, 'target_flux': 19.0},
@@ -138,6 +134,10 @@ local_inlet_tds = sum(treated_chemistry.values())
 years_axis = np.arange(0, horizon_years + 1)
 lifecycle_results = {}
 
+# Keep track of worst-case scaling values for guardrails
+max_brine_lsi = -99.0
+max_caso4_saturation = 0.0
+
 for tech, cfg in tech_registry.items():
     pressures, secs, perm_tds = [], [], []
     res_factor = 0.7 if tech in ['PFRO', 'CCRO'] else 1.2
@@ -153,12 +153,14 @@ for tech, cfg in tech_registry.items():
         caso4_sat = (((tail_ca / 40078) * (tail_so4 / 96060)) / 2.4e-5) * 100.0
         tail_lsi = calculate_lsi(tail_tds, T_operating, tail_ca, treated_chemistry['HCO3'] * conc_mult, target_ph)
         
+        if tail_lsi > max_brine_lsi: max_brine_lsi = tail_lsi
+        if caso4_sat > max_caso4_saturation: max_caso4_saturation = caso4_sat
+        
         supersat = max(0.0, tail_lsi - 1.0) + (max(0.0, caso4_sat - gypsum_ceiling) * 0.025)
         
         scale_res = supersat * cfg['scale_factor'] * (1.4 if tech == 'Conventional' else 0.35 if tech == 'CCRO' else 0.15 if tech == 'PFRO' else 0.4)
         avg_ndp = (cfg['target_flux'] / (1.0 + scale_res)) / Aw_corrected
         
-        # Calculate localized friction loss across the user's custom layout specification
         total_elements = cfg['stages'] * cfg['elements']
         friction = total_elements * (0.55 if tech in ['Conventional', 'FRRO'] else 0.35)
         
@@ -171,10 +173,68 @@ for tech, cfg in tech_registry.items():
         
     lifecycle_results[tech] = {'p': pressures, 'sec': secs, 'tds': perm_tds}
 
-# 5. RENDER SYSTEM PLOTS
-st.subheader(f"📊 Array Projections over {horizon_years} Years ({mem_choice} Layout: {custom_stages}S x {custom_elements}E)")
+# 5. NEW: RENDER LIVE KPI METRIC CARDS
+st.subheader("📊 Live System Key Performance Indicators (KPIs)")
+kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
 
-fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+# Derive baseline tracking values from the first item in our active tech loop
+primary_tech = list(tech_registry.keys())[0]
+p_start = lifecycle_results[primary_tech]['p'][0]
+p_end = lifecycle_results[primary_tech]['p'][-1]
+sec_start = lifecycle_results[primary_tech]['sec'][0]
+sec_end = lifecycle_results[primary_tech]['sec'][-1]
+daily_volume = Q_feed_total * (Y_user_target / 100.0) * 24
+
+with kpi_col1:
+    st.metric(
+        label=f"Pump Pressure (Yr 0 ➔ Yr {horizon_years})",
+        value=f"{p_end:.1f} bar",
+        delta=f"+{p_end - p_start:.1f} bar tax",
+        delta_color="inverse"
+    )
+with kpi_col2:
+    st.metric(
+        label="Specific Energy Cost (SEC)",
+        value=f"{sec_end:.3f} kWh/m³",
+        delta=f"+{((sec_end - sec_start)/sec_start)*100:.1f}% Degradation",
+        delta_color="inverse"
+    )
+with kpi_col3:
+    st.metric(
+        label="Total Plant Water Yield",
+        value=f"{daily_volume:,.0f} m³/day",
+        delta=f"Based on {Y_user_target}% Recovery"
+    )
+with kpi_col4:
+    status_text = "Highly Stable" if max_brine_lsi < 1.5 else "Scaling Susceptible"
+    st.metric(
+        label="Vessel Structural Health State",
+        value=status_text,
+        delta=f"Max Brine LSI: {max_brine_lsi:.2f}",
+        delta_color="normal" if max_brine_lsi < 1.5 else "inverse"
+    )
+
+# 6. NEW: DIGITAL TWIN SAFETY & OPERATION GUARDRAILS MONITOR
+st.subheader("🚨 Real-Time Safety & Fouling Guardrails")
+guardrail_healthy = True
+
+if max_brine_lsi > 2.2:
+    st.error(f"⚠️ **CRITICAL SCALING WARNING:** Calculated Tail Node Brine LSI is dangerously high ({max_brine_lsi:.2f}). Severe Calcium Carbonate ($CaCO_3$) crystallization is predicted to choke the spacers. Lower your recovery target or increase acid pre-treatment immediately!")
+    guardrail_healthy = False
+elif max_brine_lsi > 1.5:
+    st.warning(f"⚡ **OPERATIONAL NOTICE:** Brine LSI is elevated ({max_brine_lsi:.2f}). High threat of crystal incubation. Ensure anti-scalant pumps are fully operational.")
+    guardrail_healthy = False
+
+if max_caso4_saturation > 250.0:
+    st.error(f"💥 **CRITICAL GYPSUM WARNING:** Gypsum ($CaSO_4$) saturation levels have exceeded safe boundary ceilings ({max_caso4_saturation:.1f}%). Permanent flux decline will occur within minutes of operations. Reduce process recovery thresholds or drastically boost anti-scalant dosing parameters!")
+    guardrail_healthy = False
+
+if guardrail_healthy:
+    st.success("✅ **HYDRAULIC ENVELOPE SECURE:** All chemical saturation kinetics fall within safe anti-fouling parameters for the chosen layout profile. Membranes are running in optimal thermodynamic health.")
+
+# 7. RENDER LFC PLOTS
+st.subheader(f"📈 Long-Term Trend Metrics Over {horizon_years} Operational Years")
+fig, ax = plt.subplots(1, 3, figsize=(15, 4.5))
 for tech, data in lifecycle_results.items():
     color = full_tech_registry[tech]['color']
     ax[0].plot(years_axis, data['p'], 'o-', color=color, linewidth=2, label=tech)
