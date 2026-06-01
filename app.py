@@ -8,7 +8,7 @@ from datetime import datetime
 st.set_page_config(page_title="Desalination Digital Twin", layout="wide")
 
 st.title("🖥️ Industrial Desalination Digital Twin")
-st.markdown("### Ultimate Engineering Suite: Sizing, Multi-Scheme Aging, SCADA Logs & ROI Payback Engine")
+st.markdown("### Ultimate Engineering Suite: Sizing, Crisis Sweeps, SCADA Logs, Diagnostics & ROI Payback")
 st.write("---")
 
 # Water Source Template Database
@@ -120,18 +120,13 @@ required_surface_area_m2 = (q_permeate_calc * 1000.0) / design_flux_lmh
 calculated_total_elements = int(np.ceil(required_surface_area_m2 / selected_mem["area"]))
 vessel_count = int(np.ceil(calculated_total_elements / custom_elements))
 
-# Dynamic Ionic Molarity & Osmotic Pressure Finder (Van 't Hoff Implementation)
 def calculate_osmotic_pressure(chem_dict, concentration_factor, temp_c):
-    # Molecular weights: Na=22.99, Cl=35.45, Ca=40.08, SO4=96.06, HCO3=61.02
     mol_weights = {'Na': 22.99, 'Cl': 35.45, 'Ca': 40.08, 'SO4': 96.06, 'HCO3': 61.02}
     total_molarity = 0.0
     for ion, mg_l in chem_dict.items():
         molarity = (mg_l * concentration_factor) / (mol_weights[ion] * 1000.0)
         total_molarity += molarity
-    
-    R = 0.083145  # L * bar / (mol * K)
-    temperature_k = temp_c + 273.15
-    return total_molarity * R * temperature_k
+    return total_molarity * 0.083145 * (temp_c + 273.15)
 
 def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     log10_tds = np.log10(max(10.0, tds))
@@ -147,7 +142,6 @@ full_tech_registry = {
     'PFRO': {'stages': 2, 'elements': custom_elements, 'Aw': 2.45, 'color': '#2ecc71', 'scale_factor': 0.090, 'target_flux': design_flux_lmh + 4.5, 'premium_capex_mult': 1.15}
 }
 
-# Refined Industrial TCF Curve
 TCF = np.exp(3020.0 * (1.0 / 298.15 - 1.0 / (273.15 + T_operating)))
 months_axis = np.arange(0, 49)
 
@@ -169,15 +163,12 @@ for tech, cfg in full_tech_registry.items():
         Aw_actual = cfg['Aw'] * selected_mem['aw_mod'] * TCF * (1.0 - selected_mem['compaction'] * np.log1p(yr_equivalent))
         current_rejection = min(0.9995, selected_mem['rejection'] / (1.0 + (selected_mem['leak_grow'] * base_leak_growth_modifier) * yr_equivalent))
         
-        # Stream Concentrating Calculations
         rec_frac = Y_user_target / 100.0
         conc_factor_avg = 1.0 if tech == 'CCRO' else (1.0 + (1.0 / (1.0 - rec_frac))) / 2.0
         conc_factor_tail = 1.0 / max(0.01, 1.0 - rec_frac)
         
-        # Physical Chemistry Boundaries
         osmotic_feed = calculate_osmotic_pressure(treated_chemistry, 1.0, T_operating)
         osmotic_avg = calculate_osmotic_pressure(treated_chemistry, conc_factor_avg, T_operating)
-        osmotic_tail = calculate_osmotic_pressure(treated_chemistry, conc_factor_tail, T_operating)
         delta_osmotic = osmotic_avg - (osmotic_feed * (1.0 - current_rejection))
         
         tail_ca = treated_chemistry['Ca'] * conc_factor_tail
@@ -186,17 +177,14 @@ for tech, cfg in full_tech_registry.items():
         caso4_sat = (((tail_ca / 40078) * (treated_chemistry['SO4'] * conc_factor_tail / 96060)) / 2.4e-5) * 100.0
         tail_lsi = calculate_lsi(tail_tds, T_operating, tail_ca, treated_chemistry['HCO3'] * conc_factor_tail, st.session_state.target_ph)
         
-        # Scaling Accelerators
         supersat = max(0.0, tail_lsi - 1.0) + (max(0.0, caso4_sat - 120.0) * 0.025)
         accumulated_fouling_resistance += (supersat * cfg['scale_factor'] * base_fouling_multiplier) * (0.05 if tech == 'CCRO' else 0.12)
         
-        # Net Driving Pressure (NDP) & Vessel Pressure Losses
         avg_ndp = (cfg['target_flux'] / (1.0 + accumulated_fouling_resistance)) / Aw_actual
-        spacer_friction_drop = (cfg['stages'] * cfg['elements']) * 0.35  # 0.35 bar loss per element
+        spacer_friction_drop = (cfg['stages'] * cfg['elements']) * 0.35
         
         pump_p = max(5.0, avg_ndp + delta_osmotic + (spacer_friction_drop / 2.0))
         
-        # Energy Recovery Devices Efficiency Sweep
         if has_erd:
             net_kw = max(2.0, (((modified_feed_flow * pump_p) / 36.0) / 0.85) - (((modified_feed_flow * (1.0 - rec_frac)) * (pump_p - spacer_friction_drop) * 0.93) / 36.0))
         else:
@@ -227,17 +215,38 @@ for tech, cfg in full_tech_registry.items():
     }
 
 
-# --- 6. PLANT LIVE PROCESS FLOW DIAGRAM (PFD) METRICS ---
+# --- 6. AUTOMATED DIAGNOSTICS & ALARM BANNERS (RESTORED ENGINE) ---
 st.write("---")
-st.subheader("🏭 Plant Live Process Flow Diagram (PFD) Streamwise Metrics")
-pfd_col1, pfd_col2, pfd_col3, pfd_col4 = st.columns(4)
+st.subheader("🛡️ Digital Twin Automated Diagnostic System")
 
 active_p = technology_financial_matrix['Conventional']['p_last']
 active_sec = technology_financial_matrix['Conventional']['sec_last']
 active_tds = technology_financial_matrix['Conventional']['tds_last']
+last_frame = scada_log_data_stream[-1]
+
+# Fault Isolation Logic Trees
+has_errors = False
+if active_p > 68.0:
+    st.error(f"🚨 **CRITICAL OVERPRESSURE:** Feed pressure has crested to **{active_p:.1f} bar**. Membrane physical crush limit imminent! Reduce recovery target immediately.")
+    has_errors = True
+if last_frame['sat'] > 140.0 and st.session_state.as_dosage < 4.0:
+    st.warning(f"⚠️ **SCALING RISK DETECTED:** Calcium Sulfate saturation is sitting critical at **{last_frame['sat']:.1f}%**. Anti-scalant dosing ({st.session_state.as_dosage} mg/L) is inadequate.")
+    has_errors = True
+if active_tds > 500.0:
+    st.error(f"❌ **PERMEATE WATER BREACH:** Product water salinity hit **{active_tds:.1f} mg/L** exceeding drinking guidelines! Check for membrane chemical oxidation or seal structural leaks.")
+    has_errors = True
+
+if not has_errors:
+    st.success("✅ **ALL HYDRAULIC SYSTEMS NOMINAL:** Stream profiles scaling clean within standard ASME/ASTM design criteria boundaries.")
+
+
+# --- 7. PLANT LIVE PROCESS FLOW DIAGRAM (PFD) METRICS ---
+st.write("---")
+st.subheader("🏭 Plant Live Process Flow Diagram (PFD) Streamwise Metrics")
+pfd_col1, pfd_col2, pfd_col3, pfd_col4 = st.columns(4)
 
 with pfd_col1:
-    st.metric(label="Feed Inflow Stream (Q₀)", value=f"{modified_feed_flow:.1f} m³/h", delta="-40% Valve Drop" if fail_valve_jam else None, delta_color="inverse")
+    st.metric(label="Feed Inflow Stream (Q₀)", value=f"{modified_feed_flow:.1f} m³/h", delta="-40% Valve Jam" if fail_valve_jam else None, delta_color="inverse")
 with pfd_col2:
     st.metric(label="High-Pressure Pump Feed", value=f"{active_p:.1f} bar", delta=f"+{active_p - lifecycle_curves_by_scheme['Conventional']['p'][0]:.1f} bar Scale" if fail_algae_bloom else None, delta_color="inverse")
 with pfd_col3:
@@ -246,7 +255,7 @@ with pfd_col4:
     st.metric(label="Permeate Quality Stream", value=f"{active_tds:.1f} mg/L", delta="Oxidized Membrane" if fail_sbs_pump else None, delta_color="inverse")
 
 
-# --- 7. SCADA CONSOLE LOGGER ---
+# --- 8. SCADA CONSOLE LOGGER ---
 st.write("---")
 st.subheader("📟 SCADA Distributed Control System (DCS) Live Operational Shift Log")
 log_box_content = ""
@@ -263,10 +272,10 @@ for frame in scada_log_data_stream:
     if frame['cip']: log_box_content += f"🧼 {time_prefix} MAINTENANCE: Core element Clean-In-Place chemical sweep completed.\n"
     if frame['p'] > 65.0: log_box_content += f"🔴 {time_prefix} STRESS LIMIT: High-pressure pump head exceeding safe bounds at {frame['p']:.1f} bar.\n"
 
-st.text_area("Terminal Console Log Summary", value=log_box_content, height=150, label_visibility="collapsed")
+st.text_area("Terminal Console Log Summary", value=log_box_content, height=130, label_visibility="collapsed")
 
 
-# --- 8. STRUCTURAL AGING GRAPHICAL MATRIX ---
+# --- 9. STRUCTURAL AGING GRAPHICAL MATRIX ---
 st.write("---")
 st.subheader("⏳ Multi-Scheme Long-Term 48-Month Structural Aging Curves")
 
@@ -310,7 +319,7 @@ plt.tight_layout()
 st.pyplot(fig1)
 
 
-# --- 9. FINANCIAL PRO FORMA & ROI MATRIX ---
+# --- 10. FINANCIAL PRO FORMA & ROI MATRIX ---
 st.write("---")
 st.subheader("💰 Financial Pro Forma Asset Ledger & Investment Sizing")
 
@@ -347,7 +356,7 @@ pro_forma_table_matrix = {
 st.table(pd.DataFrame(pro_forma_table_matrix).set_index("Operational Asset Metric"))
 
 
-# --- 10. LIFECYCLE BAR CHART RENDERING ---
+# --- 11. LIFECYCLE BAR CHART RENDERING ---
 st.write("---")
 st.subheader("📊 Comparative Asset Portfolio Analysis")
 
