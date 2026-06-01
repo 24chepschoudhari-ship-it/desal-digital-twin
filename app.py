@@ -44,13 +44,13 @@ with col_f2:
     f_num = st.number_input("Value", 50.0, 600.0, float(st.session_state.flow_val), step=0.1, key="fn", label_visibility="collapsed")
 st.session_state.flow_val = f_num if f_num != st.session_state.flow_val else f_slide
 
-# Sync Recovery Goal
-if "rec_val" not in st.session_state: st.session_state.rec_val = 92.0
+# --- 🔄 FIXED: Recovery bounds expanded down to 40.0% ---
+if "rec_val" not in st.session_state: st.session_state.rec_val = 75.0
 col_r1, col_r2 = st.sidebar.columns([2, 1])
 with col_r1:
-    r_slide = st.slider("Target Recovery Goal (Y, %)", 70.0, 96.0, float(st.session_state.rec_val), step=0.5, key="rs")
+    r_slide = st.slider("Target Recovery Goal (Y, %)", 40.0, 96.0, float(st.session_state.rec_val), step=0.5, key="rs")
 with col_r2:
-    r_num = st.number_input("Value", 70.0, 96.0, float(st.session_state.rec_val), step=0.1, key="rn", label_visibility="collapsed")
+    r_num = st.number_input("Value", 40.0, 96.0, float(st.session_state.rec_val), step=0.1, key="rn", label_visibility="collapsed")
 st.session_state.rec_val = r_num if r_num != st.session_state.rec_val else r_slide
 
 # Sync Temperature
@@ -173,21 +173,18 @@ for tech, cfg in tech_registry.items():
         
     lifecycle_results[tech] = {'p': pressures, 'sec': secs, 'tds': perm_tds}
 
-    # --- NEW: SPATIAL VECTOR PROFILING ENGINE (At Year 0) ---
+    # --- SPATIAL VECTOR PROFILING ENGINE ---
     elem_idx = np.arange(1, custom_elements + 1)
     flux_vector, tds_vector, lsi_vector = [], [], []
     
-    current_flow = Q_feed_total
     current_tds = local_inlet_tds
     current_ca = treated_chemistry['Ca']
     current_alk = treated_chemistry['HCO3']
     
-    # Calculate recovery fraction handled per single element
     total_rec_fraction = Y_user_target / 100.0
     rec_per_element = total_rec_fraction / custom_elements
     
     for elem in elem_idx:
-        # High friction drop and salt build-up reduces performance down the tube
         element_flux = cfg['target_flux'] * (1.15 - (0.05 * elem))
         flux_vector.append(element_flux)
         tds_vector.append(current_tds)
@@ -195,8 +192,7 @@ for tech, cfg in tech_registry.items():
         elem_lsi = calculate_lsi(current_tds, T_operating, current_ca, current_alk, target_ph)
         lsi_vector.append(elem_lsi)
         
-        # Advance fluid mass boundaries to the next downstream element node
-        multiplier = 1.0 / (1.0 - rec_per_element)
+        multiplier = 1.0 / max(0.01, (1.0 - rec_per_element))
         current_tds *= multiplier
         current_ca *= multiplier
         current_alk *= multiplier
@@ -243,7 +239,7 @@ if max_caso4_saturation > 250.0:
 if guardrail_healthy:
     st.success("✅ **HYDRAULIC ENVELOPE SECURE:** All chemical saturation kinetics fall within safe anti-fouling parameters for the chosen layout profile. Membranes are running in optimal thermodynamic health.")
 
-# --- 7. NEW: TAB INTERFACE SETUP FOR DUAL PROFILING VIEWS ---
+# 7. TAB INTERFACE SETUP FOR DUAL PROFILING VIEWS
 st.write("---")
 tab_lifecycle, tab_spatial = st.tabs(["⏳ Long-Term Lifecycle Metrics", "📐 Internal Vessel Spatial Profiling"])
 
