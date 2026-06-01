@@ -9,6 +9,10 @@ st.title("🖥️ Industrial Desalination Digital Twin")
 st.markdown("### Advanced Multi-Year Operational Lifecycle & Safety Analytics Suite")
 st.write("---")
 
+# Initialize session state tracking for chemistry overrides if not present
+if "na_override" not in st.session_state: st.session_state.na_override = 650.0
+if "cl_override" not in st.session_state: st.session_state.cl_override = 950.0
+
 # 2. SIDEBAR PANEL FOR INTERACTIVE SETTINGS
 st.sidebar.header("⚙️ Plant Operating Framework")
 
@@ -81,41 +85,69 @@ acid_choice = st.sidebar.selectbox("Acid Treatment Strategy", ["None", "Sulfuric
 target_ph = st.sidebar.slider("Target Dosed pH", 5.0, 7.8, 7.8, step=0.1) if acid_choice != "None" else 7.8
 as_dosage = st.sidebar.slider("Anti-Scalant Target (mg/L)", 0.0, 12.0, 3.0, step=0.5)
 
+
+# --- SAFETY AUTO-FIX INTERCEPTOR ---
+if st.session_state.get("apply_lsi_fix"):
+    target_ph = 6.2
+    st.session_state.apply_lsi_fix = False
+
+if st.session_state.get("apply_gypsum_fix"):
+    as_dosage = 8.5
+    st.session_state.apply_gypsum_fix = False
+
+
 # 3. WATER CHEMISTRY INTERFACE
 st.subheader("💧 Raw Water Influent Chemistry")
 col_na, col_cl, col_ca, col_so4, col_alk = st.columns(5)
 
-with col_na: na_input = st.number_input("Sodium (Na⁺, mg/L)", value=650.0)
-with col_cl: cl_input = st.number_input("Chloride (Cl⁻, mg/L)", value=950.0)
+with col_na: na_input = st.number_input("Sodium (Na⁺, mg/L)", value=float(st.session_state.na_override), key="na_in")
+with col_cl: cl_input = st.number_input("Chloride (Cl⁻, mg/L)", value=float(st.session_state.cl_override), key="cl_in")
 with col_ca: ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", value=180.0)
 with col_so4: so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", value=520.0)
 with col_alk: alk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", value=220.0)
 
-# --- NEW: ION CHARGE BALANCE ENGINE ---
+# Sync overrides back to state variables
+st.session_state.na_override = na_input
+st.session_state.cl_override = cl_input
+
+# Ion Charge Calculations
 ph_delta = max(0.0, 7.8 - target_ph)
 dosed_alk = alk_input * max(0.10, 1.0 - (ph_delta * 0.45))
 dosed_so4 = so4_input + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_input
 dosed_cl = cl_input + (ph_delta * 40.0) if acid_choice == "Hydrochloric Acid (HCl)" else cl_input
 treated_chemistry = {'Na': na_input, 'Cl': dosed_cl, 'Ca': ca_input, 'SO4': dosed_so4, 'HCO3': dosed_alk}
 
-# Calculate milliequivalents (meq/L = mg/L * Valence / Molecular Weight)
 cations_meq = (na_input * 1 / 22.99) + (ca_input * 2 / 40.08)
 anions_meq = (dosed_cl * 1 / 35.45) + (dosed_so4 * 2 / 96.06) + (dosed_alk * 1 / 61.02)
 total_charge = cations_meq + anions_meq
+ion_balance_error = ((cations_meq - anions_meq) / total_charge) * 100 if total_charge > 0 else 0.0
 
-if total_charge > 0:
-    ion_balance_error = ((cations_meq - anions_meq) / total_charge) * 100
-else:
-    ion_balance_error = 0.0
-
-col_bal_badge, col_bal_metrics = st.columns([1, 4])
+# --- NEW: DIRECT CHARGE BALANCER INTERACTIVE COMPONENT ---
+col_bal_badge, col_bal_metrics, col_bal_btn = st.columns([1.2, 3.8, 1.5])
 with col_bal_badge:
-    if abs(ion_balance_error) <= 5.0:
+    if abs(ion_balance_error) <= 5.0: 
         st.success("✅ Ion Balance OK")
-    else:
+    else: 
         st.error("❌ Charge Imbalance")
+
 with col_bal_metrics:
     st.markdown(f"**Cations:** `{cations_meq:.2f} meq/L` | **Anions:** `{anions_meq:.2f} meq/L` | **Electro-Neutrality Error:** `{ion_balance_error:.2f}%` (Target: < ±5%)")
+
+with col_bal_btn:
+    if abs(ion_balance_error) > 0.01:
+        if st.button("⚖️ Auto-Balance Ions", help="Instantly adjust Sodium or Chloride to achieve exactly 0% charge error."):
+            # Recompute baseline balance error to establish target mass vector
+            delta_meq = cations_meq - anions_meq
+            if delta_meq > 0:
+                # Excess positive charge: Add Chloride counter-anions (MW: 35.45, Valence: 1)
+                needed_cl_mg = delta_meq * 35.45
+                st.session_state.cl_override = cl_input + needed_cl_mg
+            else:
+                # Excess negative charge: Add Sodium counter-cations (MW: 22.99, Valence: 1)
+                needed_na_mg = abs(delta_meq) * 22.99
+                st.session_state.na_override = na_input + needed_na_mg
+            st.rerun()
+
 
 # 4. SIMULATION ENGINE KINETICS
 mem_registry = {
@@ -163,7 +195,6 @@ for tech, cfg in tech_registry.items():
     res_factor = 0.7 if tech in ['PFRO', 'CCRO'] else 1.2
     gypsum_ceiling = 100.0 if as_dosage == 0 else min(600.0, 100.0 + (25.5 * (as_dosage ** 1.15) * np.exp(-0.15 * res_factor)))
     
-    # --- LIFECYCLE TIME SIMULATION LOOP ---
     for yr in years_axis:
         Aw_corrected = cfg['Aw'] * selected_mem['aw_mod'] * TCF * (1.0 - selected_mem['compaction'] * np.log1p(yr))
         current_rejection = min(0.9995, selected_mem['rejection'] / (1.0 + selected_mem['leak_grow'] * yr))
@@ -193,67 +224,58 @@ for tech, cfg in tech_registry.items():
         
     lifecycle_results[tech] = {'p': pressures, 'sec': secs, 'tds': perm_tds}
 
-    # --- SPATIAL VECTOR PROFILING ENGINE ---
+    # SPATIAL VECTOR PROFILING ENGINE
     elem_idx = np.arange(1, custom_elements + 1)
     flux_vector, tds_vector, lsi_vector = [], [], []
-    
-    current_tds = local_inlet_tds
-    current_ca = treated_chemistry['Ca']
-    current_alk = treated_chemistry['HCO3']
-    
-    total_rec_fraction = Y_user_target / 100.0
-    rec_per_element = total_rec_fraction / custom_elements
+    current_flow, current_tds, current_ca, current_alk = Q_feed_total, local_inlet_tds, treated_chemistry['Ca'], treated_chemistry['HCO3']
+    rec_per_element = (Y_user_target / 100.0) / custom_elements
     
     for elem in elem_idx:
         element_flux = cfg['target_flux'] * (1.15 - (0.05 * elem))
         flux_vector.append(element_flux)
         tds_vector.append(current_tds)
-        
-        elem_lsi = calculate_lsi(current_tds, T_operating, current_ca, current_alk, target_ph)
-        lsi_vector.append(elem_lsi)
-        
+        lsi_vector.append(calculate_lsi(current_tds, T_operating, current_ca, current_alk, target_ph))
         multiplier = 1.0 / max(0.01, (1.0 - rec_per_element))
-        current_tds *= multiplier
-        current_ca *= multiplier
-        current_alk *= multiplier
+        current_tds *= multiplier; current_ca *= multiplier; current_alk *= multiplier
         
     spatial_results[tech] = {'elem': elem_idx, 'flux': flux_vector, 'tds': tds_vector, 'lsi': lsi_vector}
-
 
 # 5. RENDER LIVE KPI METRIC CARDS
 st.subheader("📊 Live System Key Performance Indicators (KPIs)")
 kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
-
 primary_tech = list(tech_registry.keys())[0]
-p_start = lifecycle_results[primary_tech]['p'][0]
-p_end = lifecycle_results[primary_tech]['p'][-1]
-sec_start = lifecycle_results[primary_tech]['sec'][0]
-sec_end = lifecycle_results[primary_tech]['sec'][-1]
+p_start, p_end = lifecycle_results[primary_tech]['p'][0], lifecycle_results[primary_tech]['p'][-1]
+sec_start, sec_end = lifecycle_results[primary_tech]['sec'][0], lifecycle_results[primary_tech]['sec'][-1]
 daily_volume = Q_feed_total * (Y_user_target / 100.0) * 24
 
-with kpi_col1:
-    st.metric(label=f"Pump Pressure (Yr 0 ➔ Yr {horizon_years})", value=f"{p_end:.1f} bar", delta=f"+{p_end - p_start:.1f} bar tax", delta_color="inverse")
-with kpi_col2:
-    st.metric(label="Specific Energy Cost (SEC)", value=f"{sec_end:.3f} kWh/m³", delta=f"+{((sec_end - sec_start)/sec_start)*100:.1f}% Degradation", delta_color="inverse")
-with kpi_col3:
-    st.metric(label="Total Plant Water Yield", value=f"{daily_volume:,.0f} m³/day", delta=f"Based on {Y_user_target}% Recovery")
+with kpi_col1: st.metric(label=f"Pump Pressure (Yr 0 ➔ Yr {horizon_years})", value=f"{p_end:.1f} bar", delta=f"+{p_end - p_start:.1f} bar tax", delta_color="inverse")
+with kpi_col2: st.metric(label="Specific Energy Cost (SEC)", value=f"{sec_end:.3f} kWh/m³", delta=f"+{((sec_end - sec_start)/sec_start)*100:.1f}% Degradation", delta_color="inverse")
+with kpi_col3: st.metric(label="Total Plant Water Yield", value=f"{daily_volume:,.0f} m³/day", delta=f"Based on {Y_user_target}% Recovery")
 with kpi_col4:
     status_text = "Highly Stable" if max_brine_lsi < 1.5 else "Scaling Susceptible"
     st.metric(label="Vessel Structural Health State", value=status_text, delta=f"Max Brine LSI: {max_brine_lsi:.2f}", delta_color="normal" if max_brine_lsi < 1.5 else "inverse")
 
-# 6. DIGITAL TWIN SAFETY & OPERATION GUARDRAILS MONITOR
+# 6. DIAGNOSTIC & AUTOMATED MITIGATION MONITORS
 st.subheader("🚨 Real-Time Safety & Fouling Guardrails")
 guardrail_healthy = True
 
 if max_brine_lsi > 2.2:
-    st.error(f"⚠️ **CRITICAL SCALING WARNING:** Calculated Tail Node Brine LSI is dangerously high ({max_brine_lsi:.2f}). Severe Calcium Carbonate ($CaCO_3$) crystallization is predicted to choke the spacers. Lower your recovery target or increase acid pre-treatment immediately!")
+    st.error(f"⚠️ **CRITICAL SCALING WARNING:** Calculated Tail Node Brine LSI is dangerously high ({max_brine_lsi:.2f}). Severe Calcium Carbonate ($CaCO_3$) crystallization is predicted to choke the spacers.")
+    st.markdown("**What's wrong:** High alkaline concentration at high recovery elevates the pH saturation threshold, forcing immediate mineral scale dropout.")
+    if st.button("🔧 Auto-Dose Acid (Fix Carbonate Scaling)", key="btn_lsi"):
+        st.session_state.apply_lsi_fix = True
+        st.rerun()
     guardrail_healthy = False
 elif max_brine_lsi > 1.5:
     st.warning(f"⚡ **OPERATIONAL NOTICE:** Brine LSI is elevated ({max_brine_lsi:.2f}). High threat of crystal incubation. Ensure anti-scalant pumps are fully operational.")
     guardrail_healthy = False
 
 if max_caso4_saturation > 250.0:
-    st.error(f"💥 **CRITICAL GYPSUM WARNING:** Gypsum ($CaSO_4$) saturation levels have exceeded safe boundary ceilings ({max_caso4_saturation:.1f}%). Permanent flux decline will occur within minutes of operations. Reduce process recovery thresholds or drastically boost anti-scalant dosing parameters!")
+    st.error(f"💥 **CRITICAL GYPSUM WARNING:** Gypsum ($CaSO_4$) saturation levels have exceeded safe boundary ceilings ({max_caso4_saturation:.1f}%). Permanent flux decline will occur within minutes of operations.")
+    st.markdown("**What's wrong:** Total concentration factor has pushed Calcium and Sulfate ions far past their thermodynamic solubility product limits.")
+    if st.button("🚀 Optimize Anti-Scalant Dosing (Fix Gypsum Scaling)", key="btn_gyp"):
+        st.session_state.apply_gypsum_fix = True
+        st.rerun()
     guardrail_healthy = False
 
 if guardrail_healthy:
@@ -271,48 +293,20 @@ with tab_lifecycle:
         ax1[0].plot(years_axis, data['p'], 'o-', color=color, linewidth=2, label=tech)
         ax1[1].plot(years_axis, data['sec'], 's-', color=color, linewidth=2, label=tech)
         ax1[2].plot(years_axis, data['tds'], 'D-', color=color, linewidth=2, label=tech)
-
-    ax1[0].set_title("Required Pump Pressure (bar)", fontweight='bold')
-    ax1[0].set_xlabel("Years")
-    ax1[0].grid(True, linestyle=":")
-    ax1[0].legend()
-
-    ax1[1].set_title("Specific Energy Cost (kWh/m³)", fontweight='bold')
-    ax1[1].set_xlabel("Years")
-    ax1[1].grid(True, linestyle=":")
-
-    ax1[2].set_title("Permeate Product Water TDS (mg/L)", fontweight='bold')
-    ax1[2].set_xlabel("Years")
-    ax1[2].axhline(500.0, color='red', linestyle='--', alpha=0.7, label='WHO Cap')
-    ax1[2].grid(True, linestyle=":")
-    ax1[2].legend()
+    ax1[0].set_title("Required Pump Pressure (bar)"), ax1[0].set_xlabel("Years"), ax1[0].grid(True, linestyle=":"), ax1[0].legend()
+    ax1[1].set_title("Specific Energy Cost (kWh/m³)"), ax1[1].set_xlabel("Years"), ax1[1].grid(True, linestyle=":")
+    ax1[2].set_title("Permeate Product Water TDS (mg/L)"), ax1[2].set_xlabel("Years"), ax1[2].axhline(500.0, color='red', linestyle='--', alpha=0.7, label='WHO Cap'), ax1[2].grid(True, linestyle=":"), ax1[2].legend()
     st.pyplot(fig1)
 
 with tab_spatial:
     st.subheader(f"Cross-Sectional Vector Profile Along the Pressure Vessel (Element #1 to #{custom_elements})")
     fig2, ax2 = plt.subplots(1, 3, figsize=(15, 4.5))
-    
     for tech, data in spatial_results.items():
         color = full_tech_registry[tech]['color']
         ax2[0].plot(data['elem'], data['flux'], 'o-', color=color, linewidth=2, label=tech)
         ax2[1].plot(data['elem'], data['tds'], 's-', color=color, linewidth=2, label=tech)
         ax2[2].plot(data['elem'], data['lsi'], 'D-', color=color, linewidth=2, label=tech)
-
-    ax2[0].set_title("Local Element Flux (LMH)", fontweight='bold')
-    ax2[0].set_xlabel("Element Number (Direction of Flow ➔)")
-    ax2[0].set_xticks(np.arange(1, custom_elements + 1))
-    ax2[0].grid(True, linestyle=":")
-    ax2[0].legend()
-
-    ax2[1].set_title("Local Channel Stream TDS (mg/L)", fontweight='bold')
-    ax2[1].set_xlabel("Element Number (Direction of Flow ➔)")
-    ax2[1].set_xticks(np.arange(1, custom_elements + 1))
-    ax2[1].grid(True, linestyle=":")
-
-    ax2[2].set_title("Local Scaling Risk Index (LSI)", fontweight='bold')
-    ax2[2].set_xlabel("Element Number (Direction of Flow ➔)")
-    ax2[2].set_xticks(np.arange(1, custom_elements + 1))
-    ax2[2].axhline(1.5, color='orange', linestyle='--', alpha=0.7, label='Caution Ceiling')
-    ax2[2].grid(True, linestyle=":")
-    ax2[2].legend()
+    ax2[0].set_title("Local Element Flux (LMH)"), ax2[0].set_xlabel("Element Number"), ax2[0].set_xticks(np.arange(1, custom_elements + 1)), ax2[0].grid(True, linestyle=":"), ax2[0].legend()
+    ax2[1].set_title("Local Channel Stream TDS (mg/L)"), ax2[1].set_xlabel("Element Number"), ax2[1].set_xticks(np.arange(1, custom_elements + 1)), ax2[1].grid(True, linestyle=":")
+    ax2[2].set_title("Local Scaling Risk Index (LSI)"), ax2[2].set_xlabel("Element Number"), ax2[2].set_xticks(np.arange(1, custom_elements + 1)), ax2[2].axhline(1.5, color='orange', linestyle='--', alpha=0.7, label='Caution Ceiling'), ax2[2].grid(True, linestyle=":"), ax2[2].legend()
     st.pyplot(fig2)
