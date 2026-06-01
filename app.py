@@ -230,7 +230,7 @@ capexs = [conv_f['capex'], ccro_f['capex'], pfro_f['capex']]
 opexs = [conv_f['opex'], ccro_f['opex'], pfro_f['opex']]
 colors = [full_tech_registry['Conventional']['color'], full_tech_registry['CCRO']['color'], full_tech_registry['PFRO']['color']]
 
-ax[0].bar(labels, capexxs, color=colors, alpha=0.85, edgecolor='black')
+ax[0].bar(labels, capexs, color=colors, alpha=0.85, edgecolor='black')
 ax[0].set_title("Total Capital Procurement Expense (CAPEX, $)")
 ax[0].grid(True, linestyle=":", alpha=0.6)
 
