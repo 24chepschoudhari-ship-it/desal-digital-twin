@@ -119,6 +119,14 @@ meq_anions = (cl_input * 1 / 35.45) + (so4_input * 2 / 96.06) + (alk_input * 1 /
 total_charge_pool = meq_cations + meq_anions
 charge_balance_error_pct = ((meq_cations - meq_anions) / (total_charge_pool if total_charge_pool > 0 else 1.0)) * 100.0
 
+# Display Ion Balance Diagnostics Alert right under raw entry panel
+chem_alert_col1, chem_alert_col2 = st.columns([1, 3])
+with chem_alert_col1:
+    if abs(charge_balance_error_pct) > 5.0:
+        st.error(f"⚠️ Charge Mismatch: {charge_balance_error_pct:.2f}%")
+    else:
+        st.success(f"✅ Electroneutrality Met: {charge_balance_error_pct:.2f}%")
+
 ph_delta = max(0.0, 7.8 - st.session_state.target_ph)
 dosed_alk = alk_input * max(0.10, 1.0 - (ph_delta * 0.45))
 dosed_so4 = so4_input + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_input
@@ -163,6 +171,38 @@ def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     D = np.log10(max(1.0, alkalinity * 0.82))
     return current_ph - ((9.3 + A + B) - (C + D))
 
+# Advanced Davies Non-Ideal Activity and CaSO4 Solubilities Core Engine
+def calculate_davies_caso4_saturation(chem_dict, conc_factor, temp_c):
+    # Molecular weight mappings
+    mw = {'Ca': 40.08, 'SO4': 96.06, 'Na': 22.99, 'Cl': 35.45, 'HCO3': 61.02}
+    
+    # Track concentrations at the concentrated element boundary
+    c_ca = (chem_dict['Ca'] * conc_factor) / 1000.0 / mw['Ca']
+    c_so4 = (chem_dict['SO4'] * conc_factor) / 1000.0 / mw['SO4']
+    c_na = (chem_dict['Na'] * conc_factor) / 1000.0 / mw['Na']
+    c_cl = (chem_dict['Cl'] * conc_factor) / 1000.0 / mw['Cl']
+    c_hco3 = (chem_dict['HCO3'] * conc_factor) / 1000.0 / mw['HCO3']
+    
+    # Calculate true Ionic Strength (I)
+    I = 0.5 * ((c_na * 1**2) + (c_cl * 1**2) + (c_hco3 * 1**2) + (c_ca * 2**2) + (c_so4 * 2**2))
+    I = max(1e-5, I)
+    
+    # Davies activity coefficient approximation formula for divalent ions (z=2)
+    A = 0.51 * np.sqrt(I) / (1.0 + 0.3 * 3.0 * np.sqrt(I)) # Extended Debye-Huckel baseline parameters
+    log_gamma_divalent = -A * (2**2) + 0.15 * I
+    gamma_2 = 10**log_gamma_divalent
+    
+    # Free Ion Activity Product (IAP) computation
+    iap = (c_ca * gamma_2) * (c_so4 * gamma_2)
+    
+    # Temperature-corrected Ksp calculation framework for Gypsum scaling limits
+    tk = temp_c + 273.15
+    log_ksp = -68.2401 + (3241.25 / tk) + (24.3219 * np.log(tk)) - (0.05586 * tk)
+    ksp_gypsum = 10**log_ksp
+    
+    # Return percentage saturation mapping bounds
+    return (iap / ksp_gypsum) * 100.0
+
 full_tech_registry = {
     'Conventional': {'stages': 2, 'elements': custom_elements, 'Aw': 1.25, 'color': '#95a5a6', 'scale_factor': 0.180, 'premium_capex_mult': 1.0},
     'CCRO': {'stages': 1, 'elements': custom_elements, 'Aw': 1.85, 'color': '#3498db', 'scale_factor': 0.120, 'premium_capex_mult': 1.28},
@@ -206,7 +246,8 @@ for tech, cfg in full_tech_registry.items():
         tail_ca = treated_chemistry['Ca'] * conc_factor_tail
         tail_tds = local_inlet_tds * conc_factor_tail
         
-        caso4_sat = (((tail_ca / 40078) * (treated_chemistry['SO4'] * conc_factor_tail / 96060)) / 2.4e-5) * 100.0
+        # Deploy high fidelity Ksp calculation using Davies activity corrections
+        caso4_sat = calculate_davies_caso4_saturation(treated_chemistry, conc_factor_tail, T_operating)
         tail_lsi = calculate_lsi(tail_tds, T_operating, tail_ca, treated_chemistry['HCO3'] * conc_factor_tail, st.session_state.target_ph)
         
         supersat = max(0.0, tail_lsi - 1.0) + (max(0.0, caso4_sat - 120.0) * 0.025)
