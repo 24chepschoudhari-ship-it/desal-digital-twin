@@ -9,9 +9,11 @@ st.title("🖥️ Industrial Desalination Digital Twin")
 st.markdown("### Advanced Multi-Year Operational Lifecycle & Safety Analytics Suite")
 st.write("---")
 
-# Initialize session state tracking for chemistry overrides if not present
-if "na_override" not in st.session_state: st.session_state.na_override = 650.0
-if "cl_override" not in st.session_state: st.session_state.cl_override = 950.0
+# Initialize persistent session state tracking for chemistry parameters
+if "na_val" not in st.session_state: st.session_state.na_val = 650.0
+if "cl_val" not in st.session_state: st.session_state.cl_val = 950.0
+if "target_ph" not in st.session_state: st.session_state.target_ph = 7.8
+if "as_dosage" not in st.session_state: st.session_state.as_dosage = 3.0
 
 # 2. SIDEBAR PANEL FOR INTERACTIVE SETTINGS
 st.sidebar.header("⚙️ Plant Operating Framework")
@@ -79,50 +81,66 @@ mem_choice = st.sidebar.selectbox(
 )
 horizon_years = st.sidebar.slider("Lifecycle Evaluation Window (Years)", 1, 7, 5)
 
-# Chemical Pre-Treatment
+# Chemical Pre-Treatment Panel
 st.sidebar.subheader("🧪 Chemical Pre-Treatment & Dosing")
 acid_choice = st.sidebar.selectbox("Acid Treatment Strategy", ["None", "Sulfuric Acid (H2SO4)", "Hydrochloric Acid (HCl)"])
-target_ph = st.sidebar.slider("Target Dosed pH", 5.0, 7.8, 7.8, step=0.1) if acid_choice != "None" else 7.8
-as_dosage = st.sidebar.slider("Anti-Scalant Target (mg/L)", 0.0, 12.0, 3.0, step=0.5)
+
+if acid_choice != "None":
+    st.session_state.target_ph = st.sidebar.slider("Target Dosed pH", 5.0, 7.8, float(st.session_state.target_ph), step=0.1)
+else:
+    st.session_state.target_ph = 7.8
+
+st.session_state.as_dosage = st.sidebar.slider("Anti-Scalant Target (mg/L)", 0.0, 12.0, float(st.session_state.as_dosage), step=0.5)
 
 
-# --- SAFETY AUTO-FIX INTERCEPTOR ---
+# --- INTERCEPTOR: AUTO-MITIGATION TRIGGERS ---
 if st.session_state.get("apply_lsi_fix"):
-    target_ph = 6.2
+    st.session_state.target_ph = 6.2
     st.session_state.apply_lsi_fix = False
 
 if st.session_state.get("apply_gypsum_fix"):
-    as_dosage = 8.5
+    st.session_state.as_dosage = 8.5
     st.session_state.apply_gypsum_fix = False
 
 
-# 3. WATER CHEMISTRY INTERFACE
+# 3. WATER CHEMISTRY INTERFACE (PRE-CALCULATED STABLE ENVELOPE)
 st.subheader("💧 Raw Water Influent Chemistry")
 col_na, col_cl, col_ca, col_so4, col_alk = st.columns(5)
 
-with col_na: na_input = st.number_input("Sodium (Na⁺, mg/L)", value=float(st.session_state.na_override), key="na_in")
-with col_cl: cl_input = st.number_input("Chloride (Cl⁻, mg/L)", value=float(st.session_state.cl_override), key="cl_in")
-with col_ca: ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", value=180.0)
-with col_so4: so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", value=520.0)
-with col_alk: alk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", value=220.0)
+# Hard fixed reference benchmarks for non-balancing calculations
+ca_fixed = 180.0
+so4_fixed = 520.0
+alk_fixed = 220.0
 
-# Sync overrides back to state variables
-st.session_state.na_override = na_input
-st.session_state.cl_override = cl_input
+with col_na: 
+    na_input = st.number_input("Sodium (Na⁺, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.na_val), step=10.0)
+with col_cl: 
+    cl_input = st.number_input("Chloride (Cl⁻, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.cl_val), step=10.0)
+with col_ca: 
+    ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", value=ca_fixed)
+with col_so4: 
+    so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", value=so4_fixed)
+with col_alk: 
+    allk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", value=alk_fixed)
 
-# Ion Charge Calculations
-ph_delta = max(0.0, 7.8 - target_ph)
-dosed_alk = alk_input * max(0.10, 1.0 - (ph_delta * 0.45))
-dosed_so4 = so4_input + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_input
+# Sync dynamic user keyboard/click adjustments directly back into active variables
+st.session_state.na_val = na_input
+st.session_state.cl_val = cl_input
+
+# Pre-treatment modifier scaling formulas
+ph_delta = max(0.0, 7.8 - st.session_state.target_ph)
+dosed_alk = alk_fixed * max(0.10, 1.0 - (ph_delta * 0.45))
+dosed_so4 = so4_fixed + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_fixed
 dosed_cl = cl_input + (ph_delta * 40.0) if acid_choice == "Hydrochloric Acid (HCl)" else cl_input
-treated_chemistry = {'Na': na_input, 'Cl': dosed_cl, 'Ca': ca_input, 'SO4': dosed_so4, 'HCO3': dosed_alk}
+treated_chemistry = {'Na': na_input, 'Cl': dosed_cl, 'Ca': ca_fixed, 'SO4': dosed_so4, 'HCO3': dosed_alk}
 
-cations_meq = (na_input * 1 / 22.99) + (ca_input * 2 / 40.08)
+# Standard Milliequivalent Vector Math
+cations_meq = (na_input * 1 / 22.99) + (ca_fixed * 2 / 40.08)
 anions_meq = (dosed_cl * 1 / 35.45) + (dosed_so4 * 2 / 96.06) + (dosed_alk * 1 / 61.02)
 total_charge = cations_meq + anions_meq
 ion_balance_error = ((cations_meq - anions_meq) / total_charge) * 100 if total_charge > 0 else 0.0
 
-# --- NEW: DIRECT CHARGE BALANCER INTERACTIVE COMPONENT ---
+# Render Balance Display metrics
 col_bal_badge, col_bal_metrics, col_bal_btn = st.columns([1.2, 3.8, 1.5])
 with col_bal_badge:
     if abs(ion_balance_error) <= 5.0: 
@@ -135,17 +153,16 @@ with col_bal_metrics:
 
 with col_bal_btn:
     if abs(ion_balance_error) > 0.01:
-        if st.button("⚖️ Auto-Balance Ions", help="Instantly adjust Sodium or Chloride to achieve exactly 0% charge error."):
-            # Recompute baseline balance error to establish target mass vector
+        if st.button("⚖️ Auto-Balance Ions", help="Forcibly calculate counter-ions to clean up the matrix layout.", type="primary"):
             delta_meq = cations_meq - anions_meq
             if delta_meq > 0:
-                # Excess positive charge: Add Chloride counter-anions (MW: 35.45, Valence: 1)
+                # Excess cations: Inject Chloride balance vector directly into session state variable
                 needed_cl_mg = delta_meq * 35.45
-                st.session_state.cl_override = cl_input + needed_cl_mg
+                st.session_state.cl_val = cl_input + needed_cl_mg
             else:
-                # Excess negative charge: Add Sodium counter-cations (MW: 22.99, Valence: 1)
+                # Excess anions: Inject Sodium balance vector directly into session state variable
                 needed_na_mg = abs(delta_meq) * 22.99
-                st.session_state.na_override = na_input + needed_na_mg
+                st.session_state.na_val = na_input + needed_na_mg
             st.rerun()
 
 
@@ -193,7 +210,7 @@ max_caso4_saturation = 0.0
 for tech, cfg in tech_registry.items():
     pressures, secs, perm_tds = [], [], []
     res_factor = 0.7 if tech in ['PFRO', 'CCRO'] else 1.2
-    gypsum_ceiling = 100.0 if as_dosage == 0 else min(600.0, 100.0 + (25.5 * (as_dosage ** 1.15) * np.exp(-0.15 * res_factor)))
+    gypsum_ceiling = 100.0 if st.session_state.as_dosage == 0 else min(600.0, 100.0 + (25.5 * (st.session_state.as_dosage ** 1.15) * np.exp(-0.15 * res_factor)))
     
     for yr in years_axis:
         Aw_corrected = cfg['Aw'] * selected_mem['aw_mod'] * TCF * (1.0 - selected_mem['compaction'] * np.log1p(yr))
@@ -203,7 +220,7 @@ for tech, cfg in tech_registry.items():
         tail_ca, tail_so4, tail_tds = treated_chemistry['Ca'] * conc_mult, treated_chemistry['SO4'] * conc_mult, local_inlet_tds * conc_mult
         
         caso4_sat = (((tail_ca / 40078) * (tail_so4 / 96060)) / 2.4e-5) * 100.0
-        tail_lsi = calculate_lsi(tail_tds, T_operating, tail_ca, treated_chemistry['HCO3'] * conc_mult, target_ph)
+        tail_lsi = calculate_lsi(tail_tds, T_operating, tail_ca, treated_chemistry['HCO3'] * conc_mult, st.session_state.target_ph)
         
         if tail_lsi > max_brine_lsi: max_brine_lsi = tail_lsi
         if caso4_sat > max_caso4_saturation: max_caso4_saturation = caso4_sat
@@ -227,14 +244,14 @@ for tech, cfg in tech_registry.items():
     # SPATIAL VECTOR PROFILING ENGINE
     elem_idx = np.arange(1, custom_elements + 1)
     flux_vector, tds_vector, lsi_vector = [], [], []
-    current_flow, current_tds, current_ca, current_alk = Q_feed_total, local_inlet_tds, treated_chemistry['Ca'], treated_chemistry['HCO3']
+    current_tds, current_ca, current_alk = local_inlet_tds, treated_chemistry['Ca'], treated_chemistry['HCO3']
     rec_per_element = (Y_user_target / 100.0) / custom_elements
     
     for elem in elem_idx:
         element_flux = cfg['target_flux'] * (1.15 - (0.05 * elem))
         flux_vector.append(element_flux)
         tds_vector.append(current_tds)
-        lsi_vector.append(calculate_lsi(current_tds, T_operating, current_ca, current_alk, target_ph))
+        lsi_vector.append(calculate_lsi(current_tds, T_operating, current_ca, current_alk, st.session_state.target_ph))
         multiplier = 1.0 / max(0.01, (1.0 - rec_per_element))
         current_tds *= multiplier; current_ca *= multiplier; current_alk *= multiplier
         
@@ -243,7 +260,6 @@ for tech, cfg in tech_registry.items():
 # 5. RENDER LIVE KPI METRIC CARDS
 st.subheader("📊 Live System Key Performance Indicators (KPIs)")
 kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
-primary_tech = list(tech_registry.keys())[0]
 p_start, p_end = lifecycle_results[primary_tech]['p'][0], lifecycle_results[primary_tech]['p'][-1]
 sec_start, sec_end = lifecycle_results[primary_tech]['sec'][0], lifecycle_results[primary_tech]['sec'][-1]
 daily_volume = Q_feed_total * (Y_user_target / 100.0) * 24
