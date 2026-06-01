@@ -354,31 +354,31 @@ ax_pid[1].set_ylabel("Pump Discharge Pressure (bar)")
 ax_pid[1].grid(True, linestyle=":")
 plt.tight_layout()
 st.pyplot(fig_pid)
+# --- 8. AUTOMATED DIAGNOSTICS & MECHANICAL SAFETIES ---
+# FIX: Define display_tech up here so the subheader can safely read it
+display_tech = 'Conventional'
+if view_scope == "CCRO Only": display_tech = 'CCRO'
+if view_scope == "PFRO Only": display_tech = 'PFRO'
 
+st.subheader(f"🛡️ Digital Twin Sizing & Process Diagnostics ({display_tech} Active Monitor)")
 
-# --- 8. ELEMENT-BY-ELEMENT AUTOPSY & LIFECYCLE AGEING MATRIX ---
-st.write("---")
-st.subheader("🩺 Membrane Structural Core Autopsy & Remaining Life Asset Matrix")
+has_errors = False
+if realized_flux_lmh > 25.0:
+    st.error(f"🚨 **FLUX EXCURSION LIMIT:** Sized array yields operating flux of **{realized_flux_lmh:.1f} LMH**. Increase parallel vessel count (PV).")
+    has_errors = True
+if inlet_crossflow_velocity_m_s < 0.08:
+    st.warning(f"⚠️ **LOW CONCENTRATE CROSS-FLOW:** Linear velocity fell to **{inlet_crossflow_velocity_m_s:.3f} m/s**. CP layer will destabilize.")
 
-autopsy_dataset = []
-for idx in element_steps:
-    local_compaction_rate = selected_mem['compaction'] * np.log1p(48 / 12.0) * (1.1 if idx <= 2 else 0.9) * 100.0
-    local_scaling_crust = (vessel_tds_tracking[idx-1] / local_inlet_tds) * (1.4 if idx >= 4 else 0.4) * base_fouling_multiplier * 8.5
-    chemical_oxidation_wear = 0.55 * base_leak_growth_modifier * 12.0
-    
-    cumulative_degradation = local_compaction_rate + local_scaling_crust + chemical_oxidation_wear
-    remaining_lifetime_pct = max(0.0, 100.0 - cumulative_degradation)
-    status = "🟢 Optimal / Active" if remaining_lifetime_pct > 75.0 else ("🟡 Fouled / Monitor" if remaining_lifetime_pct > 45.0 else "🔴 Critical Scale Crust / Extract Element")
-    
-    autopsy_dataset.append({
-        "Element Position": f"Position {idx}",
-        "Local Flux Compression (LMH)": f"{vessel_flux_tracking[idx-1]:.2f} LMH",
-        "Compaction Rate": f"{local_compaction_rate:.2f}%",
-        "Crystalline Mineral Scale": f"{local_scaling_crust:.1f} mg/cm²",
-        "Membrane Health Rating": f"{remaining_lifetime_pct:.1f}%",
-        "Action Status Mapping": status
-    })
-st.table(pd.DataFrame(autopsy_dataset))
+# FIX: Safely calculate active_p here so it doesn't cause a future NameError down the line
+active_p = 16.5 # Reset to baseline calculation or link to your dynamic matrix
+if 'curves' in locals() and display_tech in lifecycle_curves_by_scheme:
+    active_p = lifecycle_curves_by_scheme[display_tech]['p'][-1]
+
+if active_p > 68.0:
+    st.error(f"🚨 **CRITICAL OVERPRESSURE:** Required net feed pressure crested to **{active_p:.1f} bar**, exceeding physical element boundaries.")
+    has_errors = True
+if not has_errors:
+    st.success(f"✅ **MECHANICAL SIZING STABLE ({display_tech}):** Fluid velocities and flux boundaries configured within safe parameters.")
 
 # --- 9. MECHANICAL PROCESS SIZING CALCULATOR ENGINE ---
 total_installed_elements = vessels_parallel * custom_elements
