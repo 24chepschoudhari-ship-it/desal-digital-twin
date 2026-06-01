@@ -44,7 +44,7 @@ with col_f2:
     f_num = st.number_input("Value", 50.0, 600.0, float(st.session_state.flow_val), step=0.1, key="fn", label_visibility="collapsed")
 st.session_state.flow_val = f_num if f_num != st.session_state.flow_val else f_slide
 
-# --- 🔄 FIXED: Recovery bounds expanded down to 40.0% ---
+# Recovery bounds
 if "rec_val" not in st.session_state: st.session_state.rec_val = 75.0
 col_r1, col_r2 = st.sidebar.columns([2, 1])
 with col_r1:
@@ -91,6 +91,32 @@ with col_ca: ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", value=180.0)
 with col_so4: so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", value=520.0)
 with col_alk: alk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", value=220.0)
 
+# --- NEW: ION CHARGE BALANCE ENGINE ---
+ph_delta = max(0.0, 7.8 - target_ph)
+dosed_alk = alk_input * max(0.10, 1.0 - (ph_delta * 0.45))
+dosed_so4 = so4_input + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_input
+dosed_cl = cl_input + (ph_delta * 40.0) if acid_choice == "Hydrochloric Acid (HCl)" else cl_input
+treated_chemistry = {'Na': na_input, 'Cl': dosed_cl, 'Ca': ca_input, 'SO4': dosed_so4, 'HCO3': dosed_alk}
+
+# Calculate milliequivalents (meq/L = mg/L * Valence / Molecular Weight)
+cations_meq = (na_input * 1 / 22.99) + (ca_input * 2 / 40.08)
+anions_meq = (dosed_cl * 1 / 35.45) + (dosed_so4 * 2 / 96.06) + (dosed_alk * 1 / 61.02)
+total_charge = cations_meq + anions_meq
+
+if total_charge > 0:
+    ion_balance_error = ((cations_meq - anions_meq) / total_charge) * 100
+else:
+    ion_balance_error = 0.0
+
+col_bal_badge, col_bal_metrics = st.columns([1, 4])
+with col_bal_badge:
+    if abs(ion_balance_error) <= 5.0:
+        st.success("✅ Ion Balance OK")
+    else:
+        st.error("❌ Charge Imbalance")
+with col_bal_metrics:
+    st.markdown(f"**Cations:** `{cations_meq:.2f} meq/L` | **Anions:** `{anions_meq:.2f} meq/L` | **Electro-Neutrality Error:** `{ion_balance_error:.2f}%` (Target: < ±5%)")
+
 # 4. SIMULATION ENGINE KINETICS
 mem_registry = {
     'Low Energy (LE)': {'aw_mod': 1.35, 'rejection': 0.993, 'compaction': 0.095, 'leak_grow': 0.22},
@@ -98,12 +124,6 @@ mem_registry = {
     'High-Rejection (SW30)': {'aw_mod': 0.65, 'rejection': 0.9985, 'compaction': 0.035, 'leak_grow': 0.08}
 }
 selected_mem = mem_registry[mem_choice]
-
-ph_delta = max(0.0, 7.8 - target_ph)
-dosed_alk = alk_input * max(0.10, 1.0 - (ph_delta * 0.45))
-dosed_so4 = so4_input + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_input
-dosed_cl = cl_input + (ph_delta * 40.0) if acid_choice == "Hydrochloric Acid (HCl)" else cl_input
-treated_chemistry = {'Na': na_input, 'Cl': dosed_cl, 'Ca': ca_input, 'SO4': dosed_so4, 'HCO3': dosed_alk}
 
 def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     log10_tds = np.log10(max(10.0, tds))
