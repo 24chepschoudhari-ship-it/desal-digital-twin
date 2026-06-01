@@ -92,7 +92,6 @@ else:
 
 st.session_state.as_dosage = st.sidebar.slider("Anti-Scalant Target (mg/L)", 0.0, 12.0, float(st.session_state.as_dosage), step=0.5)
 
-
 # --- INTERCEPTOR: AUTO-MITIGATION TRIGGERS ---
 if st.session_state.get("apply_lsi_fix"):
     st.session_state.target_ph = 6.2
@@ -102,69 +101,47 @@ if st.session_state.get("apply_gypsum_fix"):
     st.session_state.as_dosage = 8.5
     st.session_state.apply_gypsum_fix = False
 
-
-# 3. WATER CHEMISTRY INTERFACE (PRE-CALCULATED STABLE ENVELOPE)
+# 3. WATER CHEMISTRY INTERFACE
 st.subheader("💧 Raw Water Influent Chemistry")
 col_na, col_cl, col_ca, col_so4, col_alk = st.columns(5)
 
-# Hard fixed reference benchmarks for non-balancing calculations
 ca_fixed = 180.0
 so4_fixed = 520.0
 alk_fixed = 220.0
 
-with col_na: 
-    na_input = st.number_input("Sodium (Na⁺, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.na_val), step=10.0)
-with col_cl: 
-    cl_input = st.number_input("Chloride (Cl⁻, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.cl_val), step=10.0)
-with col_ca: 
-    ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", value=ca_fixed)
-with col_so4: 
-    so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", value=so4_fixed)
-with col_alk: 
-    allk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", value=alk_fixed)
+with col_na: na_input = st.number_input("Sodium (Na⁺, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.na_val), step=10.0)
+with col_cl: cl_input = st.number_input("Chloride (Cl⁻, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.cl_val), step=10.0)
+with col_ca: ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", value=ca_fixed)
+with col_so4: so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", value=so4_fixed)
+with col_alk: allk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", value=alk_fixed)
 
-# Sync dynamic user keyboard/click adjustments directly back into active variables
 st.session_state.na_val = na_input
 st.session_state.cl_val = cl_input
 
-# Pre-treatment modifier scaling formulas
 ph_delta = max(0.0, 7.8 - st.session_state.target_ph)
 dosed_alk = alk_fixed * max(0.10, 1.0 - (ph_delta * 0.45))
 dosed_so4 = so4_fixed + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_fixed
 dosed_cl = cl_input + (ph_delta * 40.0) if acid_choice == "Hydrochloric Acid (HCl)" else cl_input
 treated_chemistry = {'Na': na_input, 'Cl': dosed_cl, 'Ca': ca_fixed, 'SO4': dosed_so4, 'HCO3': dosed_alk}
 
-# Standard Milliequivalent Vector Math
 cations_meq = (na_input * 1 / 22.99) + (ca_fixed * 2 / 40.08)
 anions_meq = (dosed_cl * 1 / 35.45) + (dosed_so4 * 2 / 96.06) + (dosed_alk * 1 / 61.02)
 total_charge = cations_meq + anions_meq
 ion_balance_error = ((cations_meq - anions_meq) / total_charge) * 100 if total_charge > 0 else 0.0
 
-# Render Balance Display metrics
 col_bal_badge, col_bal_metrics, col_bal_btn = st.columns([1.2, 3.8, 1.5])
 with col_bal_badge:
-    if abs(ion_balance_error) <= 5.0: 
-        st.success("✅ Ion Balance OK")
-    else: 
-        st.error("❌ Charge Imbalance")
-
+    if abs(ion_balance_error) <= 5.0: st.success("✅ Ion Balance OK")
+    else: st.error("❌ Charge Imbalance")
 with col_bal_metrics:
     st.markdown(f"**Cations:** `{cations_meq:.2f} meq/L` | **Anions:** `{anions_meq:.2f} meq/L` | **Electro-Neutrality Error:** `{ion_balance_error:.2f}%` (Target: < ±5%)")
-
 with col_bal_btn:
     if abs(ion_balance_error) > 0.01:
-        if st.button("⚖️ Auto-Balance Ions", help="Forcibly calculate counter-ions to clean up the matrix layout.", type="primary"):
+        if st.button("⚖️ Auto-Balance Ions", type="primary"):
             delta_meq = cations_meq - anions_meq
-            if delta_meq > 0:
-                # Excess cations: Inject Chloride balance vector directly into session state variable
-                needed_cl_mg = delta_meq * 35.45
-                st.session_state.cl_val = cl_input + needed_cl_mg
-            else:
-                # Excess anions: Inject Sodium balance vector directly into session state variable
-                needed_na_mg = abs(delta_meq) * 22.99
-                st.session_state.na_val = na_input + needed_na_mg
+            if delta_meq > 0: st.session_state.cl_val = cl_input + (delta_meq * 35.45)
+            else: st.session_state.na_val = na_input + (abs(delta_meq) * 22.99)
             st.rerun()
-
 
 # 4. SIMULATION ENGINE KINETICS
 mem_registry = {
@@ -189,23 +166,17 @@ full_tech_registry = {
     'Conventional': {'stages': custom_stages, 'elements': custom_elements, 'Aw': 1.25, 'color': '#95a5a6', 'scale_factor': 0.180, 'target_flux': 17.5}
 }
 
-if tech_view_mode == "Single Scheme Focus" and target_tech is not None:
-    tech_registry = {target_tech: full_tech_registry[target_tech]}
-else:
-    tech_registry = full_tech_registry
+tech_registry = {target_tech: full_tech_registry[target_tech]} if tech_view_mode == "Single Scheme Focus" and target_tech else full_tech_registry
+primary_tech = list(tech_registry.keys())[0]
 
-t_kelvin_base = 298.15
-t_kelvin_actual = 273.15 + T_operating
+t_kelvin_base, t_kelvin_actual = 298.15, 273.15 + T_operating
 TCF = np.exp(2640.0 * (1.0 / t_kelvin_base - 1.0 / t_kelvin_actual))
 vfd_eff = 0.98 if abs(T_operating - 25.0) < 5 else 0.95
 local_inlet_tds = sum(treated_chemistry.values())
 
 years_axis = np.arange(0, horizon_years + 1)
-lifecycle_results = {}
-spatial_results = {}
-
-max_brine_lsi = -99.0
-max_caso4_saturation = 0.0
+lifecycle_results, spatial_results = {}, {}
+max_brine_lsi, max_caso4_saturation = -99.0, 0.0
 
 for tech, cfg in tech_registry.items():
     pressures, secs, perm_tds = [], [], []
@@ -215,7 +186,6 @@ for tech, cfg in tech_registry.items():
     for yr in years_axis:
         Aw_corrected = cfg['Aw'] * selected_mem['aw_mod'] * TCF * (1.0 - selected_mem['compaction'] * np.log1p(yr))
         current_rejection = min(0.9995, selected_mem['rejection'] / (1.0 + selected_mem['leak_grow'] * yr))
-        
         conc_mult = 1.0 / max(0.01, 1.0 - (Y_user_target / 100.0))
         tail_ca, tail_so4, tail_tds = treated_chemistry['Ca'] * conc_mult, treated_chemistry['SO4'] * conc_mult, local_inlet_tds * conc_mult
         
@@ -229,9 +199,7 @@ for tech, cfg in tech_registry.items():
         scale_res = supersat * cfg['scale_factor'] * (1.4 if tech == 'Conventional' else 0.35 if tech == 'CCRO' else 0.15 if tech == 'PFRO' else 0.4)
         avg_ndp = (cfg['target_flux'] / (1.0 + scale_res)) / Aw_corrected
         
-        total_elements = cfg['stages'] * cfg['elements']
-        friction = total_elements * (0.55 if tech in ['Conventional', 'FRRO'] else 0.35)
-        
+        friction = (cfg['stages'] * cfg['elements']) * (0.55 if tech in ['Conventional', 'FRRO'] else 0.35)
         pump_p = max(12.0, min(140.0, avg_ndp + (0.0072 * ((local_inlet_tds + tail_tds) / 2) * 0.45) + friction))
         net_kw = max(5.0, (((Q_feed_total * pump_p) / 36.0) / (0.85 * vfd_eff)) - (((Q_feed_total * (1.0 - Y_user_target/100.0)) * pump_p * 0.95) / 36.0))
         
@@ -248,8 +216,7 @@ for tech, cfg in tech_registry.items():
     rec_per_element = (Y_user_target / 100.0) / custom_elements
     
     for elem in elem_idx:
-        element_flux = cfg['target_flux'] * (1.15 - (0.05 * elem))
-        flux_vector.append(element_flux)
+        flux_vector.append(cfg['target_flux'] * (1.15 - (0.05 * elem)))
         tds_vector.append(current_tds)
         lsi_vector.append(calculate_lsi(current_tds, T_operating, current_ca, current_alk, st.session_state.target_ph))
         multiplier = 1.0 / max(0.01, (1.0 - rec_per_element))
@@ -257,12 +224,52 @@ for tech, cfg in tech_registry.items():
         
     spatial_results[tech] = {'elem': elem_idx, 'flux': flux_vector, 'tds': tds_vector, 'lsi': lsi_vector}
 
+p_end, sec_end = lifecycle_results[primary_tech]['p'][-1], lifecycle_results[primary_tech]['sec'][-1]
+daily_volume = Q_feed_total * (Y_user_target / 100.0) * 24
+q_permeate = Q_feed_total * (Y_user_target / 100.0)
+q_brine = Q_feed_total - q_permeate
+
+# --- NEW: 📈 INTERACTIVE PROCESS FLOW DIAGRAM (PFD) BLOCK ---
+st.subheader("🏭 Live Process Flow Diagram (PFD)")
+with st.container(border=True):
+    pfd_col1, pfd_col2, pfd_col3, pfd_col4, pfd_col5 = st.columns([1, 1, 1.3, 1, 1])
+    
+    with pfd_col1:
+        st.markdown("### 🚰 Stream 1\n**Raw Influent Feed**")
+        st.metric(label="Flow Rate", value=f"{Q_feed_total:.1f} m³/h")
+        st.caption(f"TDS: {local_inlet_tds:,.0f} mg/L")
+        st.markdown("<div style='text-align: center; font-size: 24px; color: #3498db;'>➔ ➔ ➔</div>", unsafe_allow_html=True)
+
+    with pfd_col2:
+        st.markdown("### 🧬 Stream 2\n**Chemical Dosing**")
+        st.metric(label="Target pH", value=f"{st.session_state.target_ph:.2f}")
+        st.caption(f"Anti-scalant: {st.session_state.as_dosage:.1f} mg/L")
+        st.markdown("<div style='text-align: center; font-size: 24px; color: #9b59b6;'>➔ ➔ ➔</div>", unsafe_allow_html=True)
+
+    with pfd_col3:
+        st.markdown(f"### ⚡ Pump & Core\n**{primary_tech} Array**")
+        st.metric(label="HPP Discharge Pressure", value=f"{p_end:.1f} bar")
+        st.caption(f"Configuration: {custom_stages} Stage / {custom_elements} Elements")
+        # Visual color adaptation based on active scaling danger bounds
+        pump_arrow_color = "#e74c3c" if (max_brine_lsi > 2.2 or max_caso4_saturation > 250.0) else "#2ecc71"
+        st.markdown(f"<div style='text-align: center; font-size: 24px; color: {pump_arrow_color};'>➔ Split ➔</div>", unsafe_allow_html=True)
+
+    with pfd_col4:
+        st.markdown("### 💧 Stream 3\n**Permeate Yield**")
+        st.metric(label="Product Flow", value=f"{q_permeate:.1f} m³/h")
+        st.caption(f"Quality: {lifecycle_results[primary_tech]['tds'][-1]:.1f} mg/L")
+        st.markdown("<div style='text-align: center; font-size: 24px; color: #2ecc71;'>➔ Product</div>", unsafe_allow_html=True)
+
+    with pfd_col5:
+        st.markdown("### 🌶️ Stream 4\n**Concentrate Brine**")
+        st.metric(label="Reject Flow", value=f"{q_brine:.1f} m³/h")
+        st.caption(f"Brine LSI: {max_brine_lsi:.2f}")
+        st.markdown("<div style='text-align: center; font-size: 24px; color: #e67e22;'>➔ Discharge</div>", unsafe_allow_html=True)
+
 # 5. RENDER LIVE KPI METRIC CARDS
 st.subheader("📊 Live System Key Performance Indicators (KPIs)")
 kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
-p_start, p_end = lifecycle_results[primary_tech]['p'][0], lifecycle_results[primary_tech]['p'][-1]
-sec_start, sec_end = lifecycle_results[primary_tech]['sec'][0], lifecycle_results[primary_tech]['sec'][-1]
-daily_volume = Q_feed_total * (Y_user_target / 100.0) * 24
+p_start, sec_start = lifecycle_results[primary_tech]['p'][0], lifecycle_results[primary_tech]['sec'][0]
 
 with kpi_col1: st.metric(label=f"Pump Pressure (Yr 0 ➔ Yr {horizon_years})", value=f"{p_end:.1f} bar", delta=f"+{p_end - p_start:.1f} bar tax", delta_color="inverse")
 with kpi_col2: st.metric(label="Specific Energy Cost (SEC)", value=f"{sec_end:.3f} kWh/m³", delta=f"+{((sec_end - sec_start)/sec_start)*100:.1f}% Degradation", delta_color="inverse")
