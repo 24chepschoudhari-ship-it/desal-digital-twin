@@ -12,7 +12,21 @@ st.write("---")
 # 2. SIDEBAR PANEL FOR INTERACTIVE SETTINGS
 st.sidebar.header("⚙️ Plant Operating Framework")
 
+# 🔄 NEW: TECHNOLOGY VIEW SELECTOR
+st.sidebar.subheader("📐 Process Configuration")
+tech_view_mode = st.sidebar.selectbox(
+    "Select Display Mode",
+    ["Compare All Schemes", "Single Scheme Focus"]
+)
+
+# If they want a single scheme, show a secondary dropdown to pick it
+if tech_view_mode == "Single Scheme Focus":
+    target_tech = st.sidebar.selectbox("Select Target Technology", ["PFRO", "CCRO", "FRRO", "Conventional"])
+else:
+    target_tech = None
+
 # Flow and Targets
+st.sidebar.subheader("🌊 Hydraulic & Thermodynamic Bounds")
 Q_feed_total = st.sidebar.slider("Feed Flow Rate (Q₀, m³/h)", 50.0, 600.0, 346.4, step=10.0)
 Y_user_target = st.sidebar.slider("Target Recovery Goal (Y, %)", 70.0, 96.0, 92.0, step=0.5)
 T_operating = st.sidebar.slider("Operating Temperature (°C)", 5.0, 45.0, 25.0, step=1.0)
@@ -64,13 +78,19 @@ def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     D = np.log10(max(1.0, alkalinity * 0.82))
     return current_ph - ((9.3 + A + B) - (C + D))
 
-# Technology performance properties
-tech_registry = {
+# Full Master Registry
+full_tech_registry = {
     'PFRO': {'stages': 1, 'elements': 6, 'Aw': 2.45, 'color': '#2ecc71', 'scale_factor': 0.090, 'target_flux': 24.5},
     'FRRO': {'stages': 2, 'elements': 6, 'Aw': 1.45, 'color': '#e67e22', 'scale_factor': 0.050, 'target_flux': 19.0},
     'CCRO': {'stages': 1, 'elements': 7, 'Aw': 1.85, 'color': '#3498db', 'scale_factor': 0.120, 'target_flux': 21.0},
     'Conventional': {'stages': 2, 'elements': 7, 'Aw': 1.25, 'color': '#95a5a6', 'scale_factor': 0.180, 'target_flux': 17.5}
 }
+
+# Filter our technology registry based on user's selection dropdown
+if tech_view_mode == "Single Scheme Focus" and target_tech is not None:
+    tech_registry = {target_tech: full_tech_registry[target_tech]}
+else:
+    tech_registry = full_tech_registry
 
 t_kelvin_base = 298.15
 t_kelvin_actual = 273.15 + T_operating
@@ -115,10 +135,10 @@ st.subheader(f"📊 Plant Performance Projections over {horizon_years} Years ({m
 
 fig, ax = plt.subplots(1, 3, figsize=(15, 5))
 for tech, data in lifecycle_results.items():
-    color = tech_registry[tech]['color']
+    color = full_tech_registry[tech]['color']
     ax[0].plot(years_axis, data['p'], 'o-', color=color, linewidth=2, label=tech)
-    ax[1].plot(years_axis, data['sec'], 's-', color=color, linewidth=2)
-    ax[2].plot(years_axis, data['tds'], 'D-', color=color, linewidth=2)
+    ax[1].plot(years_axis, data['sec'], 's-', color=color, linewidth=2, label=tech)
+    ax[2].plot(years_axis, data['tds'], 'D-', color=color, linewidth=2, label=tech)
 
 ax[0].set_title("Required Pump Pressure (bar)", fontweight='bold')
 ax[0].set_xlabel("Years")
