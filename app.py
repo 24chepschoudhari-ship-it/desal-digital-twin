@@ -30,7 +30,7 @@ col_stages, col_elems = st.sidebar.columns(2)
 with col_stages:
     custom_stages = st.number_input("No. of Stages", min_value=1, max_value=3, value=1, step=1)
 with col_elems:
-    custom_elements = st.number_input("Elements / Vessel", min_value=1, max_value=8, value=6, step=1)
+    custom_elements = st.number_input("Elements / Vessel", min_value=2, max_value=8, value=6, step=1)
 
 # Dual Input Sync Logic for Hydraulics
 st.sidebar.subheader("🌊 Hydraulic & Thermodynamic Bounds")
@@ -133,8 +133,8 @@ local_inlet_tds = sum(treated_chemistry.values())
 
 years_axis = np.arange(0, horizon_years + 1)
 lifecycle_results = {}
+spatial_results = {}
 
-# Keep track of worst-case scaling values for guardrails
 max_brine_lsi = -99.0
 max_caso4_saturation = 0.0
 
@@ -143,6 +143,7 @@ for tech, cfg in tech_registry.items():
     res_factor = 0.7 if tech in ['PFRO', 'CCRO'] else 1.2
     gypsum_ceiling = 100.0 if as_dosage == 0 else min(600.0, 100.0 + (25.5 * (as_dosage ** 1.15) * np.exp(-0.15 * res_factor)))
     
+    # --- LIFECYCLE TIME SIMULATION LOOP ---
     for yr in years_axis:
         Aw_corrected = cfg['Aw'] * selected_mem['aw_mod'] * TCF * (1.0 - selected_mem['compaction'] * np.log1p(yr))
         current_rejection = min(0.9995, selected_mem['rejection'] / (1.0 + selected_mem['leak_grow'] * yr))
@@ -157,7 +158,6 @@ for tech, cfg in tech_registry.items():
         if caso4_sat > max_caso4_saturation: max_caso4_saturation = caso4_sat
         
         supersat = max(0.0, tail_lsi - 1.0) + (max(0.0, caso4_sat - gypsum_ceiling) * 0.025)
-        
         scale_res = supersat * cfg['scale_factor'] * (1.4 if tech == 'Conventional' else 0.35 if tech == 'CCRO' else 0.15 if tech == 'PFRO' else 0.4)
         avg_ndp = (cfg['target_flux'] / (1.0 + scale_res)) / Aw_corrected
         
@@ -173,11 +173,41 @@ for tech, cfg in tech_registry.items():
         
     lifecycle_results[tech] = {'p': pressures, 'sec': secs, 'tds': perm_tds}
 
-# 5. NEW: RENDER LIVE KPI METRIC CARDS
+    # --- NEW: SPATIAL VECTOR PROFILING ENGINE (At Year 0) ---
+    elem_idx = np.arange(1, custom_elements + 1)
+    flux_vector, tds_vector, lsi_vector = [], [], []
+    
+    current_flow = Q_feed_total
+    current_tds = local_inlet_tds
+    current_ca = treated_chemistry['Ca']
+    current_alk = treated_chemistry['HCO3']
+    
+    # Calculate recovery fraction handled per single element
+    total_rec_fraction = Y_user_target / 100.0
+    rec_per_element = total_rec_fraction / custom_elements
+    
+    for elem in elem_idx:
+        # High friction drop and salt build-up reduces performance down the tube
+        element_flux = cfg['target_flux'] * (1.15 - (0.05 * elem))
+        flux_vector.append(element_flux)
+        tds_vector.append(current_tds)
+        
+        elem_lsi = calculate_lsi(current_tds, T_operating, current_ca, current_alk, target_ph)
+        lsi_vector.append(elem_lsi)
+        
+        # Advance fluid mass boundaries to the next downstream element node
+        multiplier = 1.0 / (1.0 - rec_per_element)
+        current_tds *= multiplier
+        current_ca *= multiplier
+        current_alk *= multiplier
+        
+    spatial_results[tech] = {'elem': elem_idx, 'flux': flux_vector, 'tds': tds_vector, 'lsi': lsi_vector}
+
+
+# 5. RENDER LIVE KPI METRIC CARDS
 st.subheader("📊 Live System Key Performance Indicators (KPIs)")
 kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
 
-# Derive baseline tracking values from the first item in our active tech loop
 primary_tech = list(tech_registry.keys())[0]
 p_start = lifecycle_results[primary_tech]['p'][0]
 p_end = lifecycle_results[primary_tech]['p'][-1]
@@ -186,35 +216,16 @@ sec_end = lifecycle_results[primary_tech]['sec'][-1]
 daily_volume = Q_feed_total * (Y_user_target / 100.0) * 24
 
 with kpi_col1:
-    st.metric(
-        label=f"Pump Pressure (Yr 0 ➔ Yr {horizon_years})",
-        value=f"{p_end:.1f} bar",
-        delta=f"+{p_end - p_start:.1f} bar tax",
-        delta_color="inverse"
-    )
+    st.metric(label=f"Pump Pressure (Yr 0 ➔ Yr {horizon_years})", value=f"{p_end:.1f} bar", delta=f"+{p_end - p_start:.1f} bar tax", delta_color="inverse")
 with kpi_col2:
-    st.metric(
-        label="Specific Energy Cost (SEC)",
-        value=f"{sec_end:.3f} kWh/m³",
-        delta=f"+{((sec_end - sec_start)/sec_start)*100:.1f}% Degradation",
-        delta_color="inverse"
-    )
+    st.metric(label="Specific Energy Cost (SEC)", value=f"{sec_end:.3f} kWh/m³", delta=f"+{((sec_end - sec_start)/sec_start)*100:.1f}% Degradation", delta_color="inverse")
 with kpi_col3:
-    st.metric(
-        label="Total Plant Water Yield",
-        value=f"{daily_volume:,.0f} m³/day",
-        delta=f"Based on {Y_user_target}% Recovery"
-    )
+    st.metric(label="Total Plant Water Yield", value=f"{daily_volume:,.0f} m³/day", delta=f"Based on {Y_user_target}% Recovery")
 with kpi_col4:
     status_text = "Highly Stable" if max_brine_lsi < 1.5 else "Scaling Susceptible"
-    st.metric(
-        label="Vessel Structural Health State",
-        value=status_text,
-        delta=f"Max Brine LSI: {max_brine_lsi:.2f}",
-        delta_color="normal" if max_brine_lsi < 1.5 else "inverse"
-    )
+    st.metric(label="Vessel Structural Health State", value=status_text, delta=f"Max Brine LSI: {max_brine_lsi:.2f}", delta_color="normal" if max_brine_lsi < 1.5 else "inverse")
 
-# 6. NEW: DIGITAL TWIN SAFETY & OPERATION GUARDRAILS MONITOR
+# 6. DIGITAL TWIN SAFETY & OPERATION GUARDRAILS MONITOR
 st.subheader("🚨 Real-Time Safety & Fouling Guardrails")
 guardrail_healthy = True
 
@@ -232,28 +243,60 @@ if max_caso4_saturation > 250.0:
 if guardrail_healthy:
     st.success("✅ **HYDRAULIC ENVELOPE SECURE:** All chemical saturation kinetics fall within safe anti-fouling parameters for the chosen layout profile. Membranes are running in optimal thermodynamic health.")
 
-# 7. RENDER LFC PLOTS
-st.subheader(f"📈 Long-Term Trend Metrics Over {horizon_years} Operational Years")
-fig, ax = plt.subplots(1, 3, figsize=(15, 4.5))
-for tech, data in lifecycle_results.items():
-    color = full_tech_registry[tech]['color']
-    ax[0].plot(years_axis, data['p'], 'o-', color=color, linewidth=2, label=tech)
-    ax[1].plot(years_axis, data['sec'], 's-', color=color, linewidth=2, label=tech)
-    ax[2].plot(years_axis, data['tds'], 'D-', color=color, linewidth=2, label=tech)
+# --- 7. NEW: TAB INTERFACE SETUP FOR DUAL PROFILING VIEWS ---
+st.write("---")
+tab_lifecycle, tab_spatial = st.tabs(["⏳ Long-Term Lifecycle Metrics", "📐 Internal Vessel Spatial Profiling"])
 
-ax[0].set_title("Required Pump Pressure (bar)", fontweight='bold')
-ax[0].set_xlabel("Years")
-ax[0].grid(True, linestyle=":")
-ax[0].legend()
+with tab_lifecycle:
+    st.subheader(f"Metrics Projected Over {horizon_years} Operational Years")
+    fig1, ax1 = plt.subplots(1, 3, figsize=(15, 4.5))
+    for tech, data in lifecycle_results.items():
+        color = full_tech_registry[tech]['color']
+        ax1[0].plot(years_axis, data['p'], 'o-', color=color, linewidth=2, label=tech)
+        ax1[1].plot(years_axis, data['sec'], 's-', color=color, linewidth=2, label=tech)
+        ax1[2].plot(years_axis, data['tds'], 'D-', color=color, linewidth=2, label=tech)
 
-ax[1].set_title("Specific Energy Cost (kWh/m³)", fontweight='bold')
-ax[1].set_xlabel("Years")
-ax[1].grid(True, linestyle=":")
+    ax1[0].set_title("Required Pump Pressure (bar)", fontweight='bold')
+    ax1[0].set_xlabel("Years")
+    ax1[0].grid(True, linestyle=":")
+    ax1[0].legend()
 
-ax[2].set_title("Permeate Product Water TDS (mg/L)", fontweight='bold')
-ax[2].set_xlabel("Years")
-ax[2].axhline(500.0, color='red', linestyle='--', alpha=0.7, label='WHO Cap')
-ax[2].grid(True, linestyle=":")
-ax[2].legend()
+    ax1[1].set_title("Specific Energy Cost (kWh/m³)", fontweight='bold')
+    ax1[1].set_xlabel("Years")
+    ax1[1].grid(True, linestyle=":")
 
-st.pyplot(fig)
+    ax1[2].set_title("Permeate Product Water TDS (mg/L)", fontweight='bold')
+    ax1[2].set_xlabel("Years")
+    ax1[2].axhline(500.0, color='red', linestyle='--', alpha=0.7, label='WHO Cap')
+    ax1[2].grid(True, linestyle=":")
+    ax1[2].legend()
+    st.pyplot(fig1)
+
+with tab_spatial:
+    st.subheader(f"Cross-Sectional Vector Profile Along the Pressure Vessel (Element #1 to #{custom_elements})")
+    fig2, ax2 = plt.subplots(1, 3, figsize=(15, 4.5))
+    
+    for tech, data in spatial_results.items():
+        color = full_tech_registry[tech]['color']
+        ax2[0].plot(data['elem'], data['flux'], 'o-', color=color, linewidth=2, label=tech)
+        ax2[1].plot(data['elem'], data['tds'], 's-', color=color, linewidth=2, label=tech)
+        ax2[2].plot(data['elem'], data['lsi'], 'D-', color=color, linewidth=2, label=tech)
+
+    ax2[0].set_title("Local Element Flux (LMH)", fontweight='bold')
+    ax2[0].set_xlabel("Element Number (Direction of Flow ➔)")
+    ax2[0].set_xticks(np.arange(1, custom_elements + 1))
+    ax2[0].grid(True, linestyle=":")
+    ax2[0].legend()
+
+    ax2[1].set_title("Local Channel Stream TDS (mg/L)", fontweight='bold')
+    ax2[1].set_xlabel("Element Number (Direction of Flow ➔)")
+    ax2[1].set_xticks(np.arange(1, custom_elements + 1))
+    ax2[1].grid(True, linestyle=":")
+
+    ax2[2].set_title("Local Scaling Risk Index (LSI)", fontweight='bold')
+    ax2[2].set_xlabel("Element Number (Direction of Flow ➔)")
+    ax2[2].set_xticks(np.arange(1, custom_elements + 1))
+    ax2[2].axhline(1.5, color='orange', linestyle='--', alpha=0.7, label='Caution Ceiling')
+    ax2[2].grid(True, linestyle=":")
+    ax2[2].legend()
+    st.pyplot(fig2)
