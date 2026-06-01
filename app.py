@@ -28,10 +28,10 @@ WATER_TEMPLATES = {
 # Branded Membrane Specification Database with Geometric Constants
 MEMBRANE_MANUFACTURERS = {
     "DuPont™ FilmTec™ BW30-400 (Standard Brackish)": {
-        "aw_mod": 1.00, "rejection": 0.9970, "compaction": 0.065, "leak_grow": 0.15, "cost": 480.0, "area": 37.2, "spacer_mil": 34
+        "aw_mod": 1.00, "rejection": 0.9970, "compaction": 0.065, "leak_grow": 0.15, "area": 37.2, "spacer_mil": 34
     },
     "DuPont™ FilmTec™ Eco PRO-400 (Low Energy)": {
-        "aw_mod": 1.35, "rejection": 0.9940, "compaction": 0.085, "leak_grow": 0.18, "cost": 540.0, "area": 37.2, "spacer_mil": 28
+        "aw_mod": 1.35, "rejection": 0.9940, "compaction": 0.085, "leak_grow": 0.18, "area": 37.2, "spacer_mil": 28
     }
 }
 
@@ -74,10 +74,7 @@ st.sidebar.subheader("🧼 Maintenance Sweeps")
 cip_frequency_months = st.sidebar.slider("CIP Flush Interventions", min_value=2, max_value=12, value=6)
 has_erd = st.sidebar.toggle("Deploy Isobaric Energy Recovery (ERD)", value=True)
 
-st.sidebar.subheader("🎛️ Utility Costs")
-elec_rate = st.sidebar.number_input("Electricity Tariff ($/kWh)", 0.01, 0.50, 0.12, 0.01)
-as_chem_rate = st.sidebar.number_input("Anti-Scalant Bulk Cost ($/kg)", 1.0, 15.0, 4.50, 0.50)
-
+st.sidebar.subheader("🧪 Chemical Adjustments")
 acid_choice = st.sidebar.selectbox("Acid Treatment Strategy", ["None", "Sulfuric Acid (H2SO4)"])
 st.session_state.target_ph = st.sidebar.slider("Target Dosed pH", 5.0, 7.8, float(st.session_state.target_ph), step=0.1) if acid_choice != "None" else 7.8
 st.session_state.as_dosage = st.sidebar.slider("Anti-Scalant Target (mg/L)", 0.0, 12.0, float(st.session_state.as_dosage), step=0.5)
@@ -113,26 +110,118 @@ with col_ca: ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", 0.0, 50000.0,
 with col_so4: so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", 0.0, 50000.0, float(st.session_state.so4_val), 10.0)
 with col_alk: alk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", 0.0, 50000.0, float(st.session_state.alk_val), 5.0)
 
-# Real-time Electro-neutrality Charge Balance Validator
-meq_cations = (na_input * 1 / 22.99) + (ca_input * 2 / 40.08)
-meq_anions = (cl_input * 1 / 35.45) + (so4_input * 2 / 96.06) + (alk_input * 1 / 61.02)
-total_charge_pool = meq_cations + meq_anions
-charge_balance_error_pct = ((meq_cations - meq_anions) / (total_charge_pool if total_charge_pool > 0 else 1.0)) * 100.0
-
-# Display Ion Balance Diagnostics Alert right under raw entry panel
-chem_alert_col1, chem_alert_col2 = st.columns([1, 3])
-with chem_alert_col1:
-    if abs(charge_balance_error_pct) > 5.0:
-        st.error(f"⚠️ Charge Mismatch: {charge_balance_error_pct:.2f}%")
-    else:
-        st.success(f"✅ Electroneutrality Met: {charge_balance_error_pct:.2f}%")
-
 ph_delta = max(0.0, 7.8 - st.session_state.target_ph)
 dosed_alk = alk_input * max(0.10, 1.0 - (ph_delta * 0.45))
 dosed_so4 = so4_input + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_input
 treated_chemistry = {'Na': na_input, 'Cl': cl_input, 'Ca': ca_input, 'SO4': dosed_so4, 'HCO3': dosed_alk}
 
 local_inlet_tds = sum(treated_chemistry.values())
+
+# INTERACTIVE ION BALANCE CALCULATOR CORE
+if st.button("📊 Run Ion Balance & Activity Coefficient Check", type="primary"):
+    meq_na = na_input / 22.99
+    meq_ca = (ca_input * 2) / 40.08
+    meq_cl = cl_input / 35.45
+    meq_so4 = (dosed_so4 * 2) / 96.06
+    meq_hco3 = dosed_alk / 61.02
+    
+    sum_cations = meq_na + meq_ca
+    sum_anions = meq_cl + meq_so4 + meq_hco3
+    total_ions = sum_cations + sum_anions
+    balance_error = ((sum_cations - sum_anions) / total_ions * 100.0) if total_ions > 0 else 0.0
+    
+    m_na = (na_input / 1000.0) / 22.99
+    m_ca = (ca_input / 1000.0) / 40.08
+    m_cl = (cl_input / 1000.0) / 35.45
+    m_so4 = (dosed_so4 / 1000.0) / 96.06
+    m_hco3 = (dosed_alk / 1000.0) / 61.02
+    
+    ionic_strength = 0.5 * (m_na*(1**2) + m_ca*(2**2) + m_cl*(1**2) + m_so4*(2**2) + m_hco3*(1**2))
+    ionic_strength = max(1e-5, ionic_strength)
+    
+    A_param = 0.51 * np.sqrt(ionic_strength) / (1.0 + 1.0 * np.sqrt(ionic_strength))
+    log_gamma_z1 = -A_param * (1**2) + 0.15 * ionic_strength
+    log_gamma_z2 = -A_param * (2**2) + 0.15 * ionic_strength
+    
+    gamma_1 = 10**log_gamma_z1
+    gamma_2 = 10**log_gamma_z2
+
+    st.markdown("### 🧬 Aqueous Equilibrium Assessment Summary")
+    bal_col1, bal_col2, bal_col3 = st.columns(3)
+    with bal_col1:
+        st.metric(label="Total Cation Load", value=f"{sum_cations:.3f} meq/L")
+        st.metric(label="Total Anion Load", value=f"{sum_anions:.3f} meq/L")
+        if abs(balance_error) <= 5.0: st.success(f"Electro-neutrality Balance: {balance_error:.2f}%")
+        else: st.error(f"Electro-neutrality Balance: {balance_error:.2f}% (Deviation > 5%)")
+    with bal_col2:
+        st.metric(label="Calculated Ionic Strength (I)", value=f"{ionic_strength:.4f} M")
+        st.metric(label="Total Blended Inlet TDS", value=f"{local_inlet_tds:,.1f} mg/L")
+    with bal_col3:
+        st.metric(label="Monovalent Activity Coeff (γ₁)", value=f"{gamma_1:.3f}")
+        st.metric(label="Divalent Activity Coeff (γ₂)", value=f"{gamma_2:.3f}")
+
+
+# --- NEW: LIVE MEMBRANE PROCESS WORKINGS VISUALIZER ---
+st.write("---")
+st.subheader("🔍 Live Inside-the-Vessel Membrane Profiler")
+st.markdown("This section maps the localized hydraulics step-by-step from **Element 1 (Feed Inlet)** to **Element NV (Concentrate Exit)** across a single continuous housing array.")
+
+# Create dynamic profile calculations across the array segments
+element_steps = np.arange(1, custom_elements + 1)
+vessel_flow_tracking = []
+vessel_tds_tracking = []
+vessel_cp_tracking = []
+vessel_flux_tracking = []
+
+current_feed_flow_m3 = modified_feed_flow / vessels_parallel
+current_salt_mass = current_feed_flow_m3 * local_inlet_tds
+
+for elem_idx in element_steps:
+    # Compute active boundary variables per single element
+    local_recovery = (Y_user_target / 100.0) / custom_elements
+    elem_permeate = current_feed_flow_m3 * local_recovery
+    
+    elem_feed_tds = current_salt_mass / current_feed_flow_m3
+    elem_flux = (elem_permeate * 1000.0) / selected_mem["area"]
+    
+    # Concentration Polarization boundary calculation: CP = exp(v_flux / mass_transfer_coefficient)
+    elem_cp = np.exp(elem_flux / (3600.0 * 0.00022))
+    
+    vessel_flow_tracking.append(current_feed_flow_m3)
+    vessel_tds_tracking.append(elem_feed_tds)
+    vessel_cp_tracking.append(elem_cp)
+    vessel_flux_tracking.append(elem_flux)
+    
+    # Step down parameters for next downstream element feed entry
+    current_feed_flow_m3 -= elem_permeate
+    current_salt_mass -= (elem_permeate * elem_feed_tds * (1.0 - selected_mem["rejection"]))
+
+# Render Live Workings Spatial Profile Graphs
+fig_live, ax_live = plt.subplots(1, 3, figsize=(16, 4.2))
+
+# Graph A: Spatial Salinity Cross-Section
+ax_live[0].bar(element_steps, vessel_tds_tracking, color='#e67e22', alpha=0.85, edgecolor='black')
+ax_live[0].set_title("Bulk Stream Salt Concentration Build-Up", fontsize=9, fontweight='bold')
+ax_live[0].set_xlabel("Pressure Vessel Element Position")
+ax_live[0].set_ylabel("Local Stream TDS (mg/L)")
+ax_live[0].grid(True, linestyle=":", alpha=0.6)
+
+# Graph B: Polarization Layer Thickness
+ax_live[1].plot(element_steps, vessel_cp_tracking, marker='o', color='#9b59b6', linewidth=2.5)
+ax_live[1].set_title("Concentration Polarization (CP) Boundary Layer", fontsize=9, fontweight='bold')
+ax_live[1].set_xlabel("Pressure Vessel Element Position")
+ax_live[1].set_ylabel("CP Factor (Boundary Conc. / Bulk Conc.)")
+ax_live[1].grid(True, linestyle=":", alpha=0.6)
+
+# Graph C: Flux Decay Profile across length
+ax_live[2].plot(element_steps, vessel_flux_tracking, marker='s', color='#1abc9c', linewidth=2.5)
+ax_live[2].set_title("Local Flux Compression & Drop-off", fontsize=9, fontweight='bold')
+ax_live[2].set_xlabel("Pressure Vessel Element Position")
+ax_live[2].set_ylabel("Local Flux Performance (LMH)")
+ax_live[2].grid(True, linestyle=":", alpha=0.6)
+
+plt.tight_layout()
+st.pyplot(fig_live)
 
 
 # --- 5. MECHANICAL PROCESS SIZING CALCULATOR ENGINE ---
@@ -145,8 +234,8 @@ realized_flux_lmh = (actual_q_permeate * 1000.0) / total_active_surface_area_m2
 
 # Hydrodynamic Element Velocity Computations (Cross-sectional feed flow channels)
 spacer_thickness_meters = (selected_mem["spacer_mil"] * 2.54e-5)
-vessel_inner_diameter_meters = 0.20  # Standard 8-inch high pressure vessel
-cross_sectional_flow_area = (np.pi * (vessel_inner_diameter_meters / 2)**2) * 0.55  # 55% porosity approximation
+vessel_inner_diameter_meters = 0.20  
+cross_sectional_flow_area = (np.pi * (vessel_inner_diameter_meters / 2)**2) * 0.55  
 feed_flow_per_vessel_m3_s = (modified_feed_flow / vessels_parallel) / 3600.0
 inlet_crossflow_velocity_m_s = feed_flow_per_vessel_m3_s / cross_sectional_flow_area
 
@@ -171,50 +260,40 @@ def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     D = np.log10(max(1.0, alkalinity * 0.82))
     return current_ph - ((9.3 + A + B) - (C + D))
 
-# Advanced Davies Non-Ideal Activity and CaSO4 Solubilities Core Engine
 def calculate_davies_caso4_saturation(chem_dict, conc_factor, temp_c):
-    # Molecular weight mappings
     mw = {'Ca': 40.08, 'SO4': 96.06, 'Na': 22.99, 'Cl': 35.45, 'HCO3': 61.02}
-    
-    # Track concentrations at the concentrated element boundary
     c_ca = (chem_dict['Ca'] * conc_factor) / 1000.0 / mw['Ca']
     c_so4 = (chem_dict['SO4'] * conc_factor) / 1000.0 / mw['SO4']
     c_na = (chem_dict['Na'] * conc_factor) / 1000.0 / mw['Na']
     c_cl = (chem_dict['Cl'] * conc_factor) / 1000.0 / mw['Cl']
     c_hco3 = (chem_dict['HCO3'] * conc_factor) / 1000.0 / mw['HCO3']
     
-    # Calculate true Ionic Strength (I)
     I = 0.5 * ((c_na * 1**2) + (c_cl * 1**2) + (c_hco3 * 1**2) + (c_ca * 2**2) + (c_so4 * 2**2))
     I = max(1e-5, I)
     
-    # Davies activity coefficient approximation formula for divalent ions (z=2)
-    A = 0.51 * np.sqrt(I) / (1.0 + 0.3 * 3.0 * np.sqrt(I)) # Extended Debye-Huckel baseline parameters
+    A = 0.51 * np.sqrt(I) / (1.0 + 1.0 * np.sqrt(I))
     log_gamma_divalent = -A * (2**2) + 0.15 * I
     gamma_2 = 10**log_gamma_divalent
     
-    # Free Ion Activity Product (IAP) computation
     iap = (c_ca * gamma_2) * (c_so4 * gamma_2)
-    
-    # Temperature-corrected Ksp calculation framework for Gypsum scaling limits
     tk = temp_c + 273.15
     log_ksp = -68.2401 + (3241.25 / tk) + (24.3219 * np.log(tk)) - (0.05586 * tk)
     ksp_gypsum = 10**log_ksp
     
-    # Return percentage saturation mapping bounds
     return (iap / ksp_gypsum) * 100.0
 
 full_tech_registry = {
-    'Conventional': {'stages': 2, 'elements': custom_elements, 'Aw': 1.25, 'color': '#95a5a6', 'scale_factor': 0.180, 'premium_capex_mult': 1.0},
-    'CCRO': {'stages': 1, 'elements': custom_elements, 'Aw': 1.85, 'color': '#3498db', 'scale_factor': 0.120, 'premium_capex_mult': 1.28},
-    'PFRO': {'stages': 2, 'elements': custom_elements, 'Aw': 2.45, 'color': '#2ecc71', 'scale_factor': 0.090, 'premium_capex_mult': 1.15}
+    'Conventional': {'stages': 2, 'elements': custom_elements, 'Aw': 1.25, 'color': '#95a5a6', 'scale_factor': 0.180},
+    'CCRO': {'stages': 1, 'elements': custom_elements, 'Aw': 1.85, 'color': '#3498db', 'scale_factor': 0.120},
+    'PFRO': {'stages': 2, 'elements': custom_elements, 'Aw': 2.45, 'color': '#2ecc71', 'scale_factor': 0.090}
 }
 
-viscosity_25 = 0.890  # cP
+viscosity_25 = 0.890  
 viscosity_T = 1.002 * np.exp(1.1709 * (20 - T_operating) / (T_operating + 96))
 TCF = viscosity_25 / viscosity_T
 
 months_axis = np.arange(0, 49)
-technology_financial_matrix = {}
+technology_performance_matrix = {}
 lifecycle_curves_by_scheme = {}
 scada_log_data_stream = []
 
@@ -246,21 +325,17 @@ for tech, cfg in full_tech_registry.items():
         tail_ca = treated_chemistry['Ca'] * conc_factor_tail
         tail_tds = local_inlet_tds * conc_factor_tail
         
-        # Deploy high fidelity Ksp calculation using Davies activity corrections
         caso4_sat = calculate_davies_caso4_saturation(treated_chemistry, conc_factor_tail, T_operating)
         tail_lsi = calculate_lsi(tail_tds, T_operating, tail_ca, treated_chemistry['HCO3'] * conc_factor_tail, st.session_state.target_ph)
         
         supersat = max(0.0, tail_lsi - 1.0) + (max(0.0, caso4_sat - 120.0) * 0.025)
         accumulated_fouling_resistance += (supersat * cfg['scale_factor'] * base_fouling_multiplier) * (0.05 if tech == 'CCRO' else 0.12)
         
-        # Darcy Transport Sizing
         current_realized_flux = realized_flux_lmh / (1.0 + (accumulated_fouling_resistance * 0.15))
         avg_ndp = (realized_flux_lmh / (1.0 + accumulated_fouling_resistance)) / Aw_actual
         spacer_friction_drop = (cfg['stages'] * cfg['elements']) * 0.35
         
         pump_p = max(5.0, avg_ndp + delta_osmotic + (spacer_friction_drop / 2.0))
-        
-        # Raw Brake Horsepower calculation base
         calculated_bhp = ((modified_feed_flow * (pump_p * 100000)) / (3600 * 0.84)) / 1000.0
         
         pump_efficiency = 0.84
@@ -296,16 +371,8 @@ for tech, cfg in full_tech_registry.items():
         'p': pressures, 'sec': secs, 'tds': perm_tds, 
         'flux': fluxes, 'lsi': lsis, 'sat': sats, 'bhp': bhps
     }
-            
-    annual_water_yield_m3 = (modified_feed_flow * rec_frac * 24.0) * 365.0
-    base_hardware_capex = (vessels_parallel * 12500.0) + (total_installed_elements * selected_mem['cost'])
-    total_capex = base_hardware_capex * cfg['premium_capex_mult']
     
-    annual_power_opex = (np.mean(secs) * annual_water_yield_m3) * elec_rate
-    annual_chemical_opex = (((st.session_state.as_dosage / 1e6) * (modified_feed_flow * 24 * 1000)) * 365.0 * as_chem_rate) + ((12/cip_frequency_months) * vessels_parallel * 200.0)
-    
-    technology_financial_matrix[tech] = {
-        'capex': total_capex, 'opex': annual_power_opex + annual_chemical_opex,
+    technology_performance_matrix[tech] = {
         'p_last': pressures[-1], 'sec_last': secs[-1], 'tds_last': perm_tds[-1]
     }
 
@@ -313,9 +380,9 @@ display_tech = 'Conventional'
 if view_scope == "CCRO Only": display_tech = 'CCRO'
 if view_scope == "PFRO Only": display_tech = 'PFRO'
 
-active_p = technology_financial_matrix[display_tech]['p_last']
-active_sec = technology_financial_matrix[display_tech]['sec_last']
-active_tds = technology_financial_matrix[display_tech]['tds_last']
+active_p = technology_performance_matrix[display_tech]['p_last']
+active_sec = technology_performance_matrix[display_tech]['sec_last']
+active_tds = technology_performance_matrix[display_tech]['tds_last']
 
 
 # --- 7. AUTOMATED DIAGNOSTICS & MECHANICAL SAFETIES ---
@@ -376,7 +443,7 @@ for frame in scada_log_data_stream:
 st.text_area("Terminal Console Log Summary", value=log_box_content, height=120, label_visibility="collapsed")
 
 
-# --- 10. EXPANDED PERFORMANCE GRAPHICAL ENGINE ---
+# --- 10. PERFORMANCE GRAPHICAL ENGINE ---
 st.write("---")
 st.subheader(f"⏳ Long-Term 48-Month Multi-Variable Analytical Graphs ({view_scope})")
 
@@ -467,20 +534,3 @@ else:
     
     plt.tight_layout()
     st.pyplot(fig1)
-
-
-# --- 11. FINANCIAL PRO FORMA & PROCESS LEDGER ---
-st.write("---")
-st.subheader("💰 Process Asset Ledger & System Sizing Cost Matrix")
-
-conv_f = technology_financial_matrix.get('Conventional', {'capex': 0, 'opex': 0, 'p_last': 0, 'sec_last': 0, 'tds_last': 0})
-ccro_f = technology_financial_matrix.get('CCRO', {'capex': 0, 'opex': 0, 'p_last': 0, 'sec_last': 0, 'tds_last': 0})
-pfro_f = technology_financial_matrix.get('PFRO', {'capex': 0, 'opex': 0, 'p_last': 0, 'sec_last': 0, 'tds_last': 0})
-
-pro_forma_table_matrix = {
-    "Sized Process Asset Design Metric": ["System Capital Asset Procurement (CAPEX)", "Annualized Utility & Chemistry Costs (OPEX)", "End-of-Run Driving Pressure Limit", "End-of-Run Permeate Product TDS"],
-    "Conventional Framework": [f"${conv_f['capex']:,.2f}", f"${conv_f['opex']:,.2f}", f"{conv_f['p_last']:.1f} bar", f"{conv_f['tds_last']:.1f} mg/L"],
-    "CCRO Loop Blueprint": [f"${ccro_f['capex']:,.2f}", f"${ccro_f['opex']:,.2f}", f"{ccro_f['p_last']:.1f} bar", f"{ccro_f['tds_last']:.1f} mg/L"],
-    "PFRO Sequence Model": [f"${pfro_f['capex']:,.2f}", f"${pfro_f['opex']:,.2f}", f"{pfro_f['p_last']:.1f} bar", f"{pfro_f['tds_last']:.1f} mg/L"]
-}
-st.table(pd.DataFrame(pro_forma_table_matrix).set_index("Sized Process Asset Design Metric"))
