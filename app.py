@@ -9,11 +9,61 @@ st.title("🖥️ Industrial Desalination Digital Twin")
 st.markdown("### Advanced Multi-Year Operational Lifecycle & Safety Analytics Suite")
 st.write("---")
 
+# Water Source Template Database
+WATER_TEMPLATES = {
+    "Custom / Manual Input": None,
+    "Arabian Gulf Seawater (High TDS)": {
+        "na": 11500.0, "cl": 21000.0, "ca": 450.0, "so4": 3000.0, "alk": 150.0
+    },
+    "Arizona Brackish Groundwater (High Hardness)": {
+        "na": 450.0, "cl": 680.0, "ca": 220.0, "so4": 410.0, "alk": 280.0
+    },
+    "Industrial Wastewater Effluent (High Alkalinity)": {
+        "na": 950.0, "cl": 1100.0, "ca": 90.0, "so4": 550.0, "alk": 650.0
+    },
+    "Standard Estuary Brackish Matrix": {
+        "na": 1200.0, "cl": 1950.0, "ca": 80.0, "so4": 320.0, "alk": 180.0
+    }
+}
+
+# --- BRANDED MEMBRANE SPECIFICATION DATABASE ---
+MEMBRANE_MANUFACTURERS = {
+    "DuPont™ FilmTec™ BW30-400 (Standard Brackish)": {
+        "aw_mod": 1.00, "rejection": 0.9970, "compaction": 0.065, "leak_grow": 0.15,
+        "desc": "Industry standard for high rejection brackish water treatment. Highly reliable."
+    },
+    "DuPont™ FilmTec™ Eco PRO-400 (Low Energy)": {
+        "aw_mod": 1.35, "rejection": 0.9940, "compaction": 0.085, "leak_grow": 0.18,
+        "desc": "High flow, low-energy brackish element engineered to slash pump power consumption."
+    },
+    "DuPont™ FilmTec™ SW30HRLE-400 (Seawater)": {
+        "aw_mod": 0.65, "rejection": 0.9982, "compaction": 0.035, "leak_grow": 0.08,
+        "desc": "Premium seawater element offering high rejection at lowered feed pressures."
+    },
+    "Veolia (Suez) AG8040F (High Rejection Brackish)": {
+        "aw_mod": 1.05, "rejection": 0.9965, "compaction": 0.070, "leak_grow": 0.14,
+        "desc": "Robust structural layout tailored for high-fouling industrial water loops."
+    },
+    "Hydranautics (Nitto) CPA5-LD (Ultra-High Rejection)": {
+        "aw_mod": 0.95, "rejection": 0.9975, "compaction": 0.060, "leak_grow": 0.12,
+        "desc": "Designed with advanced low-differential spacer geometry to combat biological fouling."
+    },
+    "Hydranautics (Nitto) ESPA2-LD (Energy Saving)": {
+        "aw_mod": 1.40, "rejection": 0.9950, "compaction": 0.095, "leak_grow": 0.20,
+        "desc": "Extreme high-permeability element built for low TDS wastewater reclamation."
+    }
+}
+
 # Initialize persistent session state tracking for chemistry parameters
 if "na_val" not in st.session_state: st.session_state.na_val = 650.0
 if "cl_val" not in st.session_state: st.session_state.cl_val = 950.0
+if "ca_val" not in st.session_state: st.session_state.ca_val = 180.0
+if "so4_val" not in st.session_state: st.session_state.so4_val = 520.0
+if "alk_val" not in st.session_state: st.session_state.alk_val = 220.0
+
 if "target_ph" not in st.session_state: st.session_state.target_ph = 7.8
 if "as_dosage" not in st.session_state: st.session_state.as_dosage = 3.0
+if "prev_template" not in st.session_state: st.session_state.prev_template = "Custom / Manual Input"
 
 # 2. SIDEBAR PANEL FOR INTERACTIVE SETTINGS
 st.sidebar.header("⚙️ Plant Operating Framework")
@@ -73,12 +123,16 @@ Q_feed_total = st.session_state.flow_val
 Y_user_target = st.session_state.rec_val
 T_operating = st.session_state.temp_val
 
-# Membrane Specs
-st.sidebar.subheader("🧬 Membrane Specifications")
+# --- DYNAMIC MULTI-BRAND MEMBRANE SELECTION PANEL ---
+st.sidebar.subheader("🧬 Commercial Membrane Element Selector")
 mem_choice = st.sidebar.selectbox(
-    "Select Membrane Element Model",
-    ["Standard Brackish (BW30)", "Low Energy (LE)", "High-Rejection (SW30)"]
+    "Select Manufacturer Model",
+    options=list(MEMBRANE_MANUFACTURERS.keys())
 )
+# Fetch manufacturer specific specs
+selected_mem = MEMBRANE_MANUFACTURERS[mem_choice]
+st.sidebar.info(f"ℹ️ **Model Profile:** {selected_mem['desc']}")
+
 horizon_years = st.sidebar.slider("Lifecycle Evaluation Window (Years)", 1, 7, 5)
 
 # Chemical Pre-Treatment Panel
@@ -101,30 +155,56 @@ if st.session_state.get("apply_gypsum_fix"):
     st.session_state.as_dosage = 8.5
     st.session_state.apply_gypsum_fix = False
 
-# 3. WATER CHEMISTRY INTERFACE
+
+# 3. WATER CHEMISTRY INTERFACE WITH TEMPLATE SELECTOR
 st.subheader("💧 Raw Water Influent Chemistry")
+
+selected_template = st.selectbox(
+    "📂 Select Feed Source Template Preset",
+    options=list(WATER_TEMPLATES.keys()),
+    index=list(WATER_TEMPLATES.keys()).index(st.session_state.prev_template)
+)
+
+if selected_template != st.session_state.prev_template and WATER_TEMPLATES[selected_template] is not None:
+    preset = WATER_TEMPLATES[selected_template]
+    st.session_state.na_val = preset["na"]
+    st.session_state.cl_val = preset["cl"]
+    st.session_state.ca_val = preset["ca"]
+    st.session_state.so4_val = preset["so4"]
+    st.session_state.alk_val = preset["alk"]
+    st.session_state.prev_template = selected_template
+    st.rerun()
+elif selected_template == "Custom / Manual Input" and st.session_state.prev_template != "Custom / Manual Input":
+    st.session_state.prev_template = "Custom / Manual Input"
+
 col_na, col_cl, col_ca, col_so4, col_alk = st.columns(5)
 
-ca_fixed = 180.0
-so4_fixed = 520.0
-alk_fixed = 220.0
+with col_na: na_input = st.number_input("Sodium (Na⁺, mg/L)", min_value=0.0, max_value=100000.0, value=float(st.session_state.na_val), step=10.0)
+with col_cl: cl_input = st.number_input("Chloride (Cl⁻, mg/L)", min_value=0.0, max_value=100000.0, value=float(st.session_state.cl_val), step=10.0)
+with col_ca: ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.ca_val), step=5.0)
+with col_so4: so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.so4_val), step=10.0)
+with col_alk: alk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.alk_val), step=5.0)
 
-with col_na: na_input = st.number_input("Sodium (Na⁺, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.na_val), step=10.0)
-with col_cl: cl_input = st.number_input("Chloride (Cl⁻, mg/L)", min_value=0.0, max_value=50000.0, value=float(st.session_state.cl_val), step=10.0)
-with col_ca: ca_input = st.number_input("Calcium (Ca²⁺, mg/L)", value=ca_fixed)
-with col_so4: so4_input = st.number_input("Sulfate (SO₄²⁻, mg/L)", value=so4_fixed)
-with col_alk: allk_input = st.number_input("Alkalinity (HCO₃⁻, mg/L)", value=alk_fixed)
-
-st.session_state.na_val = na_input
-st.session_state.cl_val = cl_input
+if (na_input != st.session_state.na_val or cl_input != st.session_state.cl_val or 
+    ca_input != st.session_state.ca_val or so4_input != st.session_state.so4_val or 
+    alk_input != st.session_state.alk_val):
+    st.session_state.na_val = na_input
+    st.session_state.cl_val = cl_input
+    st.session_state.ca_val = ca_input
+    st.session_state.so4_val = so4_input
+    st.session_state.alk_val = alk_input
+    if selected_template != "Custom / Manual Input":
+        st.session_state.prev_template = "Custom / Manual Input"
+        st.rerun()
 
 ph_delta = max(0.0, 7.8 - st.session_state.target_ph)
-dosed_alk = alk_fixed * max(0.10, 1.0 - (ph_delta * 0.45))
-dosed_so4 = so4_fixed + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else so4_fixed
+dosed_alk = st.session_state.alk_val * max(0.10, 1.0 - (ph_delta * 0.45))
+dosed_so4 = st.session_state.so4_val + (ph_delta * 55.0) if acid_choice == "Sulfuric Acid (H2SO4)" else st.session_state.so4_val
 dosed_cl = cl_input + (ph_delta * 40.0) if acid_choice == "Hydrochloric Acid (HCl)" else cl_input
-treated_chemistry = {'Na': na_input, 'Cl': dosed_cl, 'Ca': ca_fixed, 'SO4': dosed_so4, 'HCO3': dosed_alk}
+treated_chemistry = {'Na': st.session_state.na_val, 'Cl': dosed_cl, 'Ca': st.session_state.ca_val, 'SO4': dosed_so4, 'HCO3': dosed_alk}
 
-cations_meq = (na_input * 1 / 22.99) + (ca_fixed * 2 / 40.08)
+# Standard Milliequivalent Vector Math
+cations_meq = (st.session_state.na_val * 1 / 22.99) + (st.session_state.ca_val * 2 / 40.08)
 anions_meq = (dosed_cl * 1 / 35.45) + (dosed_so4 * 2 / 96.06) + (dosed_alk * 1 / 61.02)
 total_charge = cations_meq + anions_meq
 ion_balance_error = ((cations_meq - anions_meq) / total_charge) * 100 if total_charge > 0 else 0.0
@@ -139,18 +219,11 @@ with col_bal_btn:
     if abs(ion_balance_error) > 0.01:
         if st.button("⚖️ Auto-Balance Ions", type="primary"):
             delta_meq = cations_meq - anions_meq
-            if delta_meq > 0: st.session_state.cl_val = cl_input + (delta_meq * 35.45)
-            else: st.session_state.na_val = na_input + (abs(delta_meq) * 22.99)
+            if delta_meq > 0: st.session_state.cl_val = st.session_state.cl_val + (delta_meq * 35.45)
+            else: st.session_state.na_val = st.session_state.na_val + (abs(delta_meq) * 22.99)
             st.rerun()
 
 # 4. SIMULATION ENGINE KINETICS
-mem_registry = {
-    'Low Energy (LE)': {'aw_mod': 1.35, 'rejection': 0.993, 'compaction': 0.095, 'leak_grow': 0.22},
-    'Standard Brackish (BW30)': {'aw_mod': 1.00, 'rejection': 0.997, 'compaction': 0.065, 'leak_grow': 0.15},
-    'High-Rejection (SW30)': {'aw_mod': 0.65, 'rejection': 0.9985, 'compaction': 0.035, 'leak_grow': 0.08}
-}
-selected_mem = mem_registry[mem_choice]
-
 def calculate_lsi(tds, temp_c, calcium, alkalinity, current_ph):
     log10_tds = np.log10(max(10.0, tds))
     A = (log10_tds - 1.0) / 10.0
@@ -249,7 +322,7 @@ with st.container(border=True):
     with pfd_col3:
         st.markdown(f"### ⚡ Pump & Core\n**{primary_tech} Array**")
         st.metric(label="HPP Discharge Pressure", value=f"{p_end:.1f} bar")
-        st.caption(f"Configuration: {custom_stages} Stage / {custom_elements} Elements")
+        st.caption(f"Element: {mem_choice.split(' ')[2] if len(mem_choice.split(' ')) > 2 else 'Element'}")
         pump_arrow_color = "#e74c3c" if (max_brine_lsi > 2.2 or max_caso4_saturation > 250.0) else "#2ecc71"
         st.markdown(f"<div style='text-align: center; font-size: 24px; color: {pump_arrow_color};'>➔ Split ➔</div>", unsafe_allow_html=True)
 
