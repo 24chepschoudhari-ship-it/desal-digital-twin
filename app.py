@@ -380,17 +380,18 @@ for idx in element_steps:
     })
 st.table(pd.DataFrame(autopsy_dataset))
 
-
 # --- 9. MECHANICAL PROCESS SIZING CALCULATOR ENGINE ---
 total_installed_elements = vessels_parallel * custom_elements
 total_active_surface_area_m2 = total_installed_elements * selected_mem["area"]
+
+# FIX: Explicitly define actual_q_permeate before calculating realized_flux_lmh
+actual_q_permeate = modified_feed_flow * (Y_user_target / 100.0)
 realized_flux_lmh = (actual_q_permeate * 1000.0) / total_active_surface_area_m2
 
 vessel_inner_diameter_meters = 0.20  
 cross_sectional_flow_area = (np.pi * (vessel_inner_diameter_meters / 2)**2) * 0.55  
 feed_flow_per_vessel_m3_s = (modified_feed_flow / vessels_parallel) / 3600.0
 inlet_crossflow_velocity_m_s = feed_flow_per_vessel_m3_s / cross_sectional_flow_area
-
 
 # --- 10. AUTOMATED DIAGNOSTICS & MECHANICAL SAFETIES ---
 st.write("---")
